@@ -65,6 +65,13 @@ type CmdOptions struct {
 	Encrypt          string
 
 	Credentials
+	CommonConf
+}
+
+type CommonConf struct {
+	NacosCommonNamespaceID string
+	NacosCommonGroup       string
+	NacosCommonDataID      string
 }
 
 type Credentials struct {

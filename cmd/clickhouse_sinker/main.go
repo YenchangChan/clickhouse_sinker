@@ -80,6 +80,9 @@ func initCmdOptions() {
 	util.EnvStringVar(&cmdOps.NacosNamespaceID, "nacos-namespace-id")
 	util.EnvStringVar(&cmdOps.NacosGroup, "nacos-group")
 	util.EnvStringVar(&cmdOps.NacosDataID, "nacos-dataid")
+	util.EnvStringVar(&cmdOps.NacosCommonNamespaceID, "nacos-common-namespace-id")
+	util.EnvStringVar(&cmdOps.NacosCommonGroup, "nacos-common-group")
+	util.EnvStringVar(&cmdOps.NacosCommonDataID, "nacos-common-dataid")
 	util.EnvStringVar(&cmdOps.NacosServiceName, "nacos-service-name")
 
 	util.EnvStringVar(&cmdOps.ClickhouseUsername, "clickhouse-username")
@@ -107,6 +110,9 @@ func initCmdOptions() {
 		`nacos namespace ID. Neither DEFAULT_NAMESPACE_ID("public") nor namespace name work! When namespace is 'public', fill in the blank string here!`)
 	flag.StringVar(&cmdOps.NacosGroup, "nacos-group", cmdOps.NacosGroup, `nacos group name. Empty string doesn't work!`)
 	flag.StringVar(&cmdOps.NacosDataID, "nacos-dataid", cmdOps.NacosDataID, "nacos dataid")
+	flag.StringVar(&cmdOps.NacosCommonNamespaceID, "nacos-common-namespace-id", cmdOps.NacosCommonNamespaceID, "nacos common namespace id")
+	flag.StringVar(&cmdOps.NacosCommonGroup, "nacos-common-group", cmdOps.NacosCommonGroup, "nacos common group")
+	flag.StringVar(&cmdOps.NacosCommonDataID, "nacos-common-dataid", cmdOps.NacosCommonDataID, "nacos common dataid")
 	flag.StringVar(&cmdOps.NacosServiceName, "nacos-service-name", cmdOps.NacosServiceName, "nacos service name")
 
 	flag.StringVar(&cmdOps.ClickhouseUsername, "clickhouse-username", cmdOps.ClickhouseUsername, "clickhouse username")
@@ -257,6 +263,9 @@ func main() {
 			properties["namespaceId"] = cmdOps.NacosNamespaceID
 			properties["group"] = cmdOps.NacosGroup
 			properties["dataId"] = cmdOps.NacosDataID
+			properties["commonNamespaceId"] = cmdOps.NacosCommonNamespaceID
+			properties["commonGroup"] = cmdOps.NacosCommonGroup
+			properties["commonDataId"] = cmdOps.NacosCommonDataID
 			properties["serviceName"] = cmdOps.NacosServiceName
 			properties["logDir"] = logDir
 		} else {

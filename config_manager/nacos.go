@@ -28,12 +28,15 @@ import (
 var _ RemoteConfManager = (*NacosConfManager)(nil)
 
 type NacosConfManager struct {
-	configClient config_client.IConfigClient
-	namingClient naming_client.INamingClient
-	group        string
-	dataID       string
-	serviceName  string
-	instance     string // ip:port
+	configClient       config_client.IConfigClient
+	commonConfigClient config_client.IConfigClient
+	namingClient       naming_client.INamingClient
+	group              string
+	dataID             string
+	commonGroup        string
+	commonDataID       string
+	serviceName        string
+	instance           string // ip:port
 
 	// state of assignment loop
 	ctx      context.Context
@@ -67,7 +70,7 @@ func (ncm *NacosConfManager) Init(properties map[string]interface{}) (err error)
 		})
 	}
 
-	var namespaceID string //Neither DEFAULT_NAMESPACE_ID("public") nor namespace name work!
+	var namespaceID, commonNamespaceID string //Neither DEFAULT_NAMESPACE_ID("public") nor namespace name work!
 	logDir := "."
 	group := constant.DEFAULT_GROUP //Empty string doesn't work!
 	if pop, ok := properties["namespaceId"]; ok {
@@ -114,6 +117,35 @@ func (ncm *NacosConfManager) Init(properties map[string]interface{}) (err error)
 	if pop, ok := properties["dataId"]; ok {
 		ncm.dataID, _ = pop.(string)
 	}
+	if pop, ok := properties["commonNamespaceId"]; ok {
+		commonNamespaceID, _ = pop.(string)
+	}
+	if pop, ok := properties["commonGroup"]; ok {
+		ncm.commonGroup, _ = pop.(string)
+	}
+	if pop, ok := properties["commonDataId"]; ok {
+		ncm.commonDataID, _ = pop.(string)
+	}
+
+	cc2 := constant.ClientConfig{
+		NamespaceId:         commonNamespaceID,
+		TimeoutMs:           5000,
+		ListenInterval:      10000,
+		NotLoadCacheAtStart: true,
+		CacheDir:            filepath.Join(logDir, "nacos_cache"),
+		CustomLogger:        &NacosLogger{util.Logger.Sugar()},
+		Username:            properties["username"].(string),
+		Password:            properties["password"].(string),
+	}
+
+	ncm.commonConfigClient, err = clients.CreateConfigClient(map[string]interface{}{
+		"serverConfigs": sc,
+		"clientConfig":  cc2,
+	})
+	if err != nil {
+		err = errors.Wrapf(err, "")
+		return
+	}
 	if pop, ok := properties["serviceName"]; ok {
 		ncm.serviceName, _ = pop.(string)
 	}
@@ -135,6 +167,22 @@ func (ncm *NacosConfManager) GetConfig() (conf *config.Config, err error) {
 	if err = hjson.Unmarshal([]byte(content), conf); err != nil {
 		err = errors.Wrapf(err, "")
 		return
+	}
+	// merge common config
+	if ncm.commonConfigClient != nil && ncm.commonDataID != "" && ncm.commonGroup != "" {
+		var commonContent string
+		commonContent, err = ncm.commonConfigClient.GetConfig(vo.ConfigParam{
+			DataId: ncm.commonDataID,
+			Group:  ncm.commonGroup,
+		})
+		if err != nil {
+			err = errors.Wrapf(err, "")
+			return
+		}
+		err = util.MergeConfig(conf, []byte(commonContent))
+		if err != nil {
+			util.Logger.Warn("merge common config failed, will use local config continue", zap.Error(err))
+		}
 	}
 	return
 }

@@ -40,26 +40,26 @@ type Config struct {
 	Task                    *TaskConfig
 	Tasks                   []*TaskConfig
 	Assignment              Assignment
-	LogLevel                string
+	LogLevel                string `merge:"sinker.logLevel"`
 	LogTrace                bool
-	RecordPoolSize          int64
-	ReloadSeriesMapInterval int
-	ActiveSeriesRange       int
+	RecordPoolSize          int64 `merge:"sinker.recordPoolSize"`
+	ReloadSeriesMapInterval int   `merge:"sinker.reloadSeriesMapInterval"`
+	ActiveSeriesRange       int   `merge:"sinker.activeSeriesRange"`
 
 	Groups map[string]*GroupConfig `json:"-"`
 }
 
 // KafkaConfig configuration parameters
 type KafkaConfig struct {
-	Brokers    string
+	Brokers    string `merge:"kafka.brokers"`
 	Properties struct {
 		HeartbeatInterval      int `json:"heartbeat.interval.ms"`
 		SessionTimeout         int `json:"session.timeout.ms"`
 		RebalanceTimeout       int `json:"rebalance.timeout.ms"`
 		RequestTimeoutOverhead int `json:"request.timeout.ms"`
 		MaxPollInterval        int `json:"max.poll.interval.ms"`
-	}
-	ResetSaslRealm bool
+	} `merge:"kafka.properties"`
+	ResetSaslRealm bool `merge:"kafka.resetSaslRealm"`
 	Security       map[string]string
 	TLS            struct {
 		Enable         bool
@@ -104,22 +104,22 @@ type KafkaConfig struct {
 
 // ClickHouseConfig configuration parameters
 type ClickHouseConfig struct {
-	Cluster  string
-	DB       string
-	Hosts    [][]string
-	Port     int
-	Username string
-	Password string
-	Protocol string //native, http
+	Cluster  string     `merge:"clickhouse.cluster"`
+	DB       string     `merge:"clickhouse.db"`
+	Hosts    [][]string `merge:"clickhouse.shard"`
+	Port     int        `merge:"clickhouse.port"`
+	Username string     `merge:"clickhouse.username"`
+	Password string     `merge:"clickhouse.password"`
+	Protocol string     //native, http
 
 	// Whether enable TLS encryption with clickhouse-server
 	Secure bool
 	// Whether skip verify clickhouse-server cert
 	InsecureSkipVerify bool
-	RetryTimes         int // <=0 means retry infinitely
-	MaxOpenConns       int
-	ReadTimeout        int
-	AsyncInsert        bool
+	RetryTimes         int  `merge:"clickhouse.retryTimes"` // <=0 means retry infinitely
+	MaxOpenConns       int  `merge:"clickhouse.maxOpenConns"`
+	ReadTimeout        int  `merge:"clickhouse.readTimeout"`
+	AsyncInsert        bool `merge:"clickhouse.asyncInsert"`
 	AsyncSettings      struct {
 		// refers to https://clickhouse.com/docs/en/operations/settings/settings#async-insert
 		AsyncInsertMaxDataSize    int `json:"async_insert_max_data_size,omitempty"`
@@ -129,13 +129,13 @@ type ClickHouseConfig struct {
 		WaitforAsyncInsertTimeout int `json:"wait_for_async_insert_timeout,omitempty"`
 		AsyncInsertThreads        int `json:"async_insert_threads,omitempty"` // 16
 		AsyncInsertDeduplicate    int `json:"async_insert_deduplicate,omitempty"`
-	}
+	} `merge:"clickhouse.asyncSettings"`
 	Ctx context.Context `json:"-"`
 }
 
 type Discovery struct {
-	Enabled       bool
-	CheckInterval int
+	Enabled       bool `merge:"clickhouse.discovery.enabled"`
+	CheckInterval int  `merge:"clickhouse.discovery.checkInterval"`
 	UpdatedBy     string
 	UpdatedAt     time.Time
 }
