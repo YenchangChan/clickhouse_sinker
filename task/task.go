@@ -18,6 +18,7 @@ package task
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -156,11 +157,12 @@ func (service *Service) Init() (err error) {
 	return
 }
 
-func (service *Service) Put(msg *model.InputMessage, traceId string, flushFn func(traceId, with string)) error {
+func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 	taskCfg := service.taskCfg
 	statistics.ConsumeMsgsTotal.WithLabelValues(taskCfg.Name).Inc()
 	var err error
 	var row *model.Row
+	var key string
 	var foundNewKeys bool
 	var metric model.Metric
 
@@ -177,7 +179,7 @@ func (service *Service) Put(msg *model.InputMessage, traceId string, flushFn fun
 		}
 		return nil
 	} else {
-		row = service.metric2Row(metric, msg)
+		key, row = service.metric2Row(metric, msg)
 		if row == nil {
 			return nil
 		}
@@ -201,7 +203,7 @@ func (service *Service) Put(msg *model.InputMessage, traceId string, flushFn fun
 				util.Logger.Warn("new key detected, consumer is going to restart", zap.String("consumer group", service.taskCfg.ConsumerGroup), zap.Error(err))
 				go service.consumer.restart()
 			}
-			flushFn(traceId, "foundNewKeys and restart")
+			flushFn()
 			if err = service.clickhouse.ChangeSchema(&service.newKeys); err != nil {
 				util.Logger.Fatal("clickhouse.ChangeSchema failed", zap.String("task", taskCfg.Name), zap.Error(err))
 			}
@@ -220,13 +222,15 @@ func (service *Service) Put(msg *model.InputMessage, traceId string, flushFn fun
 		} else {
 			msgRow.Shard = int(msgRow.Msg.Offset * (int64(msgRow.Msg.Partition + 1)) >> service.offShift % int64(service.sharder.shards))
 		}
-		service.sharder.PutElement(&msgRow)
+		service.sharder.PutElement(key, &msgRow)
 	}
 
 	return nil
 }
 
-func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage) (r *model.Row) {
+func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage) (string, *model.Row) {
+	key := service.clickhouse.DbName
+	var state *model.DbState
 	if service.idxSerID >= 0 {
 		// If some labels are not Prometheus native, ETL shall calculate and pass "__series_id__" and "__mgmt_id__".
 		val := metric.GetInt64(service.clickhouse.DimSerID, false)
@@ -248,9 +252,26 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 		if newSeries {
 			var labels []string
 			row = append(row, mgmtID, nil) // __mgmt_id__, labels
+			found := false
 			for i := service.idxSerID + 3; i < service.numDims; i++ {
 				dim := service.dims[i]
 				val := model.GetValueByType(metric, dim)
+				if dim.IsDbKey {
+					if val != nil && !reflect.ValueOf(val).IsZero() {
+						key = util.Replace(service.consumer.sinker.curCfg.Clickhouse.DbKey, dim.SourceName, val)
+						found = true
+					}
+					var ok bool
+					if state, ok = service.consumer.GetDbMap(key); !ok {
+						//util.Logger.Info("new dbkey found, creating db", zap.String("dbkey", key), zap.String("task", service.taskCfg.Name))
+						state = &model.DbState{
+							Name:       key,
+							PrepareSQL: util.Replace(service.clickhouse.PrepareSQLTmpl, dim.SourceName, val),
+							PromSerSQL: util.Replace(service.clickhouse.PromSerSQLTmpl, dim.SourceName, val),
+							NewKey:     true,
+						}
+					}
+				}
 				row = append(row, val)
 				if val != nil && dim.Type.Type == model.String && dim.Name != service.nameKey && dim.Name != "le" && (service.lblBlkList == nil || !service.lblBlkList.MatchString(dim.Name)) {
 					// "labels" JSON excludes "le", so that "labels" can be used as group key for histogram queries.
@@ -259,9 +280,24 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 					labels = append(labels, fmt.Sprintf(`%s: %s`, strconv.Quote(dim.Name), strconv.Quote(labelVal)))
 				}
 			}
+			if !found {
+				var ok bool
+				if state, ok = service.consumer.GetDbMap(key); !ok {
+					// util.Logger.Info("no db key found, using default db", zap.String("task", service.taskCfg.Name))
+					// service.clickhouse.EnsureSchema(key)
+					state = &model.DbState{
+						Name:       key,
+						PrepareSQL: service.clickhouse.PrepareSQL,
+						PromSerSQL: service.clickhouse.PromSerSQL,
+						NewKey:     true,
+					}
+				}
+			}
+			atomic.AddInt64(&state.BufLength, 1)
+			service.consumer.SetDbMap(key, state)
 			row[service.idxSerID+2] = fmt.Sprintf("{%s}", strings.Join(labels, ", "))
 		}
-		return &row
+		return key, &row
 	} else {
 		var shardingVal uint64
 		if len(service.clickhouse.SortingKeys) > 0 {
@@ -273,6 +309,7 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 			shardingVal = xxhash.Sum64String(strings.Join(sortingKeys, "."))
 		}
 		row := make(model.Row, 0, len(service.dims))
+		found := false
 		for _, dim := range service.dims {
 			if strings.HasPrefix(dim.Name, "__kafka") {
 				if strings.HasSuffix(dim.Name, "_topic") {
@@ -292,6 +329,22 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 				row = append(row, shardingVal)
 			} else {
 				val := model.GetValueByType(metric, dim)
+				if dim.IsDbKey {
+					if val != nil && !reflect.ValueOf(val).IsZero() {
+						key = util.Replace(service.consumer.sinker.curCfg.Clickhouse.DbKey, dim.SourceName, val)
+						found = true
+					}
+					var ok bool
+					if state, ok = service.consumer.GetDbMap(key); !ok {
+						// util.Logger.Info("new dbkey found, creating db", zap.String("dbkey", key), zap.String("task", service.taskCfg.Name))
+						// service.clickhouse.EnsureSchema(key)
+						state = &model.DbState{
+							Name:       key,
+							PrepareSQL: util.Replace(service.clickhouse.PrepareSQLTmpl, dim.SourceName, val),
+							NewKey:     true,
+						}
+					}
+				}
 				if dim.NotNullable && val == nil {
 					// null 不能插入到非 nullbale字段中
 					util.Logger.Warn("null value detected, throw this message",
@@ -302,12 +355,26 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 						zap.Int64("offset", msg.Offset),
 						zap.String("key", string(msg.Key)),
 						zap.Time("timestamp", *msg.Timestamp))
-					return nil
+					return key, nil
 				}
 				row = append(row, val)
 			}
 		}
+		if !found {
+			var ok bool
+			if state, ok = service.consumer.GetDbMap(key); !ok {
+				// util.Logger.Info("no db key found, using default db", zap.String("task", service.taskCfg.Name), zap.String("key", key))
+				// service.clickhouse.EnsureSchema(key)
+				state = &model.DbState{
+					Name:       key,
+					PrepareSQL: service.clickhouse.PrepareSQL,
+					NewKey:     true,
+				}
+			}
+		}
+		atomic.AddInt64(&state.BufLength, 1)
+		service.consumer.SetDbMap(key, state)
 
-		return &row
+		return key, &row
 	}
 }

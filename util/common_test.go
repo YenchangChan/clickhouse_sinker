@@ -1,6 +1,7 @@
 package util
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -130,4 +131,22 @@ func TestSetValue(t *testing.T) {
 	// TrySetValue(&f, 25)
 	// assert.Equal(t, f, 0)
 
+}
+
+func TestMatch(t *testing.T) {
+	assert.Equal(t, true, Match("test_${name}_${password}", "name"))
+	assert.Equal(t, true, Match("test_${name}_${password}", "password"))
+	assert.Equal(t, false, Match("test_${name}_${password}", "none"))
+	assert.Equal(t, false, Match("test_12345", "name"))
+}
+
+func TestReplace(t *testing.T) {
+	fmt.Println(Replace("test_${name}_${password}", "name", "zhangsan"))
+
+	fmt.Println(Replace("default_${tenant_id}", "tenant_id", 123456))
+
+	str := `insert into test_${name}_${password}.t1 values (name, password)`
+	str = Replace(str, "name", "zhangsan")
+	str = Replace(str, "password", "123456")
+	fmt.Println(str)
 }

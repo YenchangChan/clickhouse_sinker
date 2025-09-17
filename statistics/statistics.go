@@ -80,7 +80,7 @@ var (
 			Name: prefix + "shard_msgs",
 			Help: "num of msgs in shard",
 		},
-		[]string{"task"},
+		[]string{"task", "dbkey"},
 	)
 	WritingPoolBacklog = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{

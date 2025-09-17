@@ -49,6 +49,7 @@ type Consumer struct {
 	cancel    context.CancelFunc
 	state     atomic.Uint32
 	errCommit bool
+	dbMap     sync.Map //用来维护多个db的insert语句
 
 	numFlying  int32
 	mux        sync.Mutex
@@ -71,6 +72,19 @@ func newConsumer(s *Sinker, gCfg *config.GroupConfig) *Consumer {
 	c.state.Store(util.StateStopped)
 	c.commitDone = sync.NewCond(&c.mux)
 	return c
+}
+
+func (c *Consumer) GetDbMap(name string) (*model.DbState, bool) {
+	val, ok := c.dbMap.Load(name)
+	if ok {
+		return val.(*model.DbState), true
+	} else {
+		return nil, false
+	}
+}
+
+func (c *Consumer) SetDbMap(name string, state *model.DbState) {
+	c.dbMap.Store(name, state)
 }
 
 func (c *Consumer) addTask(tsk *Service) {
@@ -130,6 +144,12 @@ func (c *Consumer) cleanupFn() {
 		c.commitDone.Wait()
 	}
 	c.mux.Unlock()
+
+	// cleanup dbmap
+	c.dbMap.Range(func(key, value any) bool {
+		c.dbMap.Delete(key)
+		return true
+	})
 }
 
 func (c *Consumer) updateGroupConfig(g *config.GroupConfig) {
@@ -149,27 +169,35 @@ func (c *Consumer) processFetch() {
 	c.processWg.Add(1)
 	defer c.processWg.Done()
 	recMap := make(model.RecordMap)
-	var bufLength int64
 
-	flushFn := func(traceId, with string) {
+	flushFn := func() {
 		if len(recMap) == 0 {
 			return
 		}
-		if bufLength > 0 {
-			util.LogTrace(traceId, util.TraceKindProcessEnd, zap.String("with", with), zap.Int64("bufLength", bufLength))
-		}
 		var wg sync.WaitGroup
-		c.tasks.Range(func(key, value any) bool {
-			// flush to shard, ck
-			task := value.(*Service)
-			task.sharder.Flush(c.ctx, &wg, recMap[task.taskCfg.Topic], traceId)
+		c.dbMap.Range(func(key, value any) bool {
+			state := value.(*model.DbState)
+			c.tasks.Range(func(key, value any) bool {
+				// flush to shard, ck
+				task := value.(*Service)
+				if state.NewKey {
+					util.Logger.Info("new dbkey found, ensure schema",
+						zap.String("task", task.taskCfg.Name),
+						zap.String("dbkey", state.Name))
+					task.sharder.service.clickhouse.EnsureSchema(state.Name)
+					state.NewKey = false
+					c.SetDbMap(state.Name, state)
+				}
+				task.sharder.Flush(c.ctx, &wg, *state)
+				return true
+			})
+
+			c.mux.Lock()
+			c.numFlying++
+			c.mux.Unlock()
 			return true
 		})
-		bufLength = 0
-
-		c.mux.Lock()
-		c.numFlying++
-		c.mux.Unlock()
+		util.Logger.Info("commit offsets to kafka", zap.String("consumergroup", c.grpConfig.Name), zap.Reflect("offsets", recMap))
 		c.sinker.commitsCh <- &Commit{group: c.grpConfig.Name, offsets: recMap, wg: &wg, consumer: c}
 		recMap = make(model.RecordMap)
 	}
@@ -181,8 +209,6 @@ func (c *Consumer) processFetch() {
 
 	ticker := time.NewTicker(time.Duration(c.grpConfig.FlushInterval) * time.Second)
 	defer ticker.Stop()
-	traceId := "NO_RECORDS_FETCHED"
-	wait := false
 	for {
 		select {
 		case fetches := <-c.fetchesCh:
@@ -190,18 +216,6 @@ func (c *Consumer) processFetch() {
 				continue
 			}
 			fetch := fetches.Fetch.Records()
-			if wait {
-				util.LogTrace(fetches.TraceId,
-					util.TraceKindProcessing,
-					zap.String("message", "bufThreshold not reached, use old traceId"),
-					zap.String("old_trace_id", traceId),
-					zap.Int("records", len(fetch)),
-					zap.Int("bufThreshold", bufThreshold),
-					zap.Int64("totalLength", bufLength))
-			} else {
-				traceId = fetches.TraceId
-				util.LogTrace(traceId, util.TraceKindProcessStart, zap.Int("records", len(fetch)))
-			}
 			items, done := int64(len(fetch)), int64(-1)
 			var concurrency int
 			if concurrency = int(items/1000) + 1; concurrency > MaxParallelism {
@@ -241,8 +255,7 @@ func (c *Consumer) processFetch() {
 							tsk := value.(*Service)
 							if (tablename != "" && tsk.clickhouse.TableName == tablename) || tsk.taskCfg.Topic == rec.Topic {
 								//bufLength++
-								atomic.AddInt64(&bufLength, 1)
-								if e := tsk.Put(msg, traceId, flushFn); e != nil {
+								if e := tsk.Put(msg, flushFn); e != nil {
 									atomic.StoreInt64(&done, items)
 									err = e
 									// decrise the error record
@@ -290,15 +303,21 @@ func (c *Consumer) processFetch() {
 				}
 			}
 
-			if bufLength > int64(bufThreshold) {
-				flushFn(traceId, "bufLength reached")
+			flushed := false
+			c.dbMap.Range(func(key, value interface{}) bool {
+				state := value.(*model.DbState)
+				if state.BufLength > int64(bufThreshold) {
+					flushed = true
+					return false
+				}
+				return true
+			})
+			if flushed {
 				ticker.Reset(time.Duration(c.grpConfig.FlushInterval) * time.Second)
-				wait = false
-			} else {
-				wait = true
+				flushFn()
 			}
 		case <-ticker.C:
-			flushFn(traceId, "ticker.C triggered")
+			flushFn()
 		case <-c.ctx.Done():
 			util.Logger.Info("stopped processing loop", zap.String("group", c.grpConfig.Name))
 			return

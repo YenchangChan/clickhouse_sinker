@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -31,7 +32,6 @@ import (
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
 
-	"github.com/google/uuid"
 	"github.com/thanos-io/thanos/pkg/errors"
 )
 
@@ -39,7 +39,8 @@ var (
 	Logger       *zap.Logger
 	logAtomLevel zap.AtomicLevel
 	logPaths     []string
-	logTrace     bool
+
+	re = regexp.MustCompile(`\$\{(.*?)\}`)
 )
 
 type CmdOptions struct {
@@ -263,34 +264,6 @@ func SetLogLevel(newLogLevel string) {
 	}
 }
 
-func GenTraceId() string {
-	return uuid.NewString()
-}
-
-const (
-	TraceKindFetchStart   string = "fetch start"
-	TraceKindFetchEnd     string = "fetch end"
-	TraceKindProcessStart string = "process start"
-	TraceKindProcessEnd   string = "process end"
-	TraceKindWriteStart   string = "loopwrite start"
-	TraceKindWriteEnd     string = "loopwrite end"
-	TraceKindProcessing   string = "process continue"
-)
-
-func SetLogTrace(enabled bool) {
-	logTrace = enabled
-}
-
-func LogTrace(traceId string, kind string, fields ...zapcore.Field) {
-	if logTrace {
-		allFields := []zapcore.Field{
-			zap.String("trace_id", traceId),
-			zap.String("trace_kind", kind)}
-		allFields = append(allFields, fields...)
-		Logger.Info("===trace===", allFields...)
-	}
-}
-
 // set v2 to v1, if v1 didn't bind any value
 // FIXME: how about v1 bind default value?
 func TrySetValue(v1, v2 interface{}) bool {
@@ -375,4 +348,30 @@ func CompareClickHouseVersion(v1, v2 string) int {
 		}
 	}
 	return 0
+}
+
+func Key(s string) string {
+	return fmt.Sprintf("${%s}", s)
+}
+
+func Value(val interface{}) string {
+	s := fmt.Sprint(val)
+	return strings.ReplaceAll(s, ".", "_")
+}
+
+func Replace(str, key string, val interface{}) string {
+	if ok := Match(str, key); ok {
+		return strings.ReplaceAll(str, Key(key), Value(val))
+	}
+	return str
+}
+
+func Match(str, key string) bool {
+	vars := re.FindAllStringSubmatch(str, -1)
+	for _, v := range vars {
+		if key == v[1] {
+			return true
+		}
+	}
+	return false
 }

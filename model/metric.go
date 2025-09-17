@@ -57,6 +57,7 @@ type ColumnWithType struct {
 	Type        *TypeInfo
 	SourceName  string
 	NotNullable bool
+	IsDbKey     bool
 }
 
 // struct for ingesting a clickhouse Map type value

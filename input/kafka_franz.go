@@ -48,8 +48,7 @@ const (
 )
 
 type Fetches struct {
-	Fetch   *kgo.Fetches
-	TraceId string
+	Fetch *kgo.Fetches
 }
 
 // KafkaFranz implements input.Inputer
@@ -190,8 +189,6 @@ LOOP:
 			}
 			continue
 		}
-		traceId := util.GenTraceId()
-		util.LogTrace(traceId, util.TraceKindFetchStart, zap.String("consumer group", k.grpConfig.Name), zap.Int("buffersize", k.grpConfig.BufferSize))
 		fetches := k.cl.PollRecords(k.ctx, k.grpConfig.BufferSize)
 		err := fetches.Err()
 		if fetches == nil || fetches.IsClientClosed() || errors.Is(err, context.Canceled) {
@@ -204,7 +201,6 @@ LOOP:
 		OnConsumerPoll(k.consumerId)
 		fetchRecords := fetches.NumRecords()
 		util.Rs.Inc(int64(fetchRecords))
-		util.LogTrace(traceId, util.TraceKindFetchEnd, zap.String("consumer group", k.grpConfig.Name), zap.Int64("records", int64(fetchRecords)))
 		// Automatically end the program if it remains inactive for a specific duration of time.
 		timeout := processTimeOut * time.Minute
 		if processTimeOut < time.Duration(k.cfg.Kafka.Properties.RebalanceTimeout)*time.Millisecond {
@@ -213,8 +209,7 @@ LOOP:
 		t := time.NewTimer(timeout)
 		select {
 		case k.fetch <- Fetches{
-			TraceId: traceId,
-			Fetch:   &fetches,
+			Fetch: &fetches,
 		}:
 			t.Stop()
 		case <-k.ctx.Done():

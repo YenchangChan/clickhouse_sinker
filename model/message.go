@@ -16,6 +16,14 @@ type InputMessage struct {
 	Timestamp *time.Time
 }
 
+type DbState struct {
+	Name       string
+	PrepareSQL string
+	PromSerSQL string
+	BufLength  int64
+	NewKey     bool
+}
+
 type Row []interface{}
 type Rows []*Row
 

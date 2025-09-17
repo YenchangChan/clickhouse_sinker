@@ -122,7 +122,7 @@ type Sharder struct {
 	policy  *ShardingPolicy
 	shards  int
 	mux     sync.Mutex
-	msgBuf  []*model.Rows
+	msgBuf  map[string][]*model.Rows
 }
 
 func NewSharder(service *Service) (sh *Sharder, err error) {
@@ -136,12 +136,12 @@ func NewSharder(service *Service) (sh *Sharder, err error) {
 		service: service,
 		policy:  policy,
 		shards:  shards,
-		msgBuf:  make([]*model.Rows, shards),
+		msgBuf:  make(map[string][]*model.Rows),
 	}
-	for i := 0; i < shards; i++ {
-		rs := make(model.Rows, 0)
-		sh.msgBuf[i] = &rs
-	}
+	// for i := 0; i < shards; i++ {
+	// 	rs := make(model.Rows, 0)
+	// 	sh.msgBuf[i] = &rs
+	// }
 	return
 }
 
@@ -149,15 +149,22 @@ func (sh *Sharder) Calc(row *model.Row, offset int64) (int, error) {
 	return sh.policy.Calc(row, offset)
 }
 
-func (sh *Sharder) PutElement(msgRow *model.MsgRow) {
+func (sh *Sharder) PutElement(key string, msgRow *model.MsgRow) {
 	sh.mux.Lock()
 	defer sh.mux.Unlock()
-	rows := sh.msgBuf[msgRow.Shard]
+	if _, ok := sh.msgBuf[key]; !ok {
+		sh.msgBuf[key] = make([]*model.Rows, sh.shards)
+		for i := 0; i < sh.shards; i++ {
+			rs := make(model.Rows, 0)
+			sh.msgBuf[key][i] = &rs
+		}
+	}
+	rows := sh.msgBuf[key][msgRow.Shard]
 	*rows = append(*rows, msgRow.Row)
-	statistics.ShardMsgs.WithLabelValues(sh.service.taskCfg.Name).Inc()
+	statistics.ShardMsgs.WithLabelValues(sh.service.taskCfg.Name, key).Inc()
 }
 
-func (sh *Sharder) Flush(c context.Context, wg *sync.WaitGroup, rmap map[int32]*model.BatchRange, traceId string) {
+func (sh *Sharder) Flush(c context.Context, wg *sync.WaitGroup, state model.DbState) {
 	sh.mux.Lock()
 	defer sh.mux.Unlock()
 	select {
@@ -169,7 +176,7 @@ func (sh *Sharder) Flush(c context.Context, wg *sync.WaitGroup, rmap map[int32]*
 		util.Logger.Debug("flush records to ck")
 		taskCfg := sh.service.taskCfg
 		batchId, _ := nanoid.New()
-		for i, rows := range sh.msgBuf {
+		for i, rows := range sh.msgBuf[state.Name] {
 			realSize := len(*rows)
 			if realSize > 0 {
 				msgCnt += realSize
@@ -181,16 +188,15 @@ func (sh *Sharder) Flush(c context.Context, wg *sync.WaitGroup, rmap map[int32]*
 					Wg:       wg,
 				}
 				batch.Wg.Add(1)
-				sh.service.clickhouse.Send(batch, traceId)
+				sh.service.clickhouse.Send(batch, state)
 				rs := make(model.Rows, 0, realSize)
-				sh.msgBuf[i] = &rs
+				sh.msgBuf[state.Name][i] = &rs
 			}
 		}
 		if msgCnt > 0 {
 			util.Logger.Info(fmt.Sprintf("created a batch group for task %v with %d shards, total messages %d", sh.service.taskCfg.Name, len(sh.msgBuf), msgCnt),
-				zap.String("group", batchId),
-				zap.Reflect("offsets", rmap))
-			statistics.ShardMsgs.WithLabelValues(taskCfg.Name).Sub(float64(msgCnt))
+				zap.String("group", batchId), zap.String("dbkey", state.Name))
+			statistics.ShardMsgs.WithLabelValues(taskCfg.Name, state.Name).Sub(float64(msgCnt))
 		}
 	}
 }

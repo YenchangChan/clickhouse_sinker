@@ -339,7 +339,6 @@ func (s *Sinker) stopAllTasks() {
 
 func (s *Sinker) applyConfig(newCfg *config.Config) (err error) {
 	util.SetLogLevel(newCfg.LogLevel)
-	util.SetLogTrace(newCfg.LogTrace)
 	util.Rs.SetPoolSize(newCfg.RecordPoolSize)
 	util.Rs.Reset()
 	if err := util.Gsypt.Unmarshal(&newCfg.Clickhouse); err != nil {

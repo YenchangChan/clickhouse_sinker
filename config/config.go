@@ -41,10 +41,9 @@ type Config struct {
 	Tasks                   []*TaskConfig
 	Assignment              Assignment
 	LogLevel                string `merge:"sinker.logLevel"`
-	LogTrace                bool
-	RecordPoolSize          int64 `merge:"sinker.recordPoolSize"`
-	ReloadSeriesMapInterval int   `merge:"sinker.reloadSeriesMapInterval"`
-	ActiveSeriesRange       int   `merge:"sinker.activeSeriesRange"`
+	RecordPoolSize          int64  `merge:"sinker.recordPoolSize"`
+	ReloadSeriesMapInterval int    `merge:"sinker.reloadSeriesMapInterval"`
+	ActiveSeriesRange       int    `merge:"sinker.activeSeriesRange"`
 
 	Groups map[string]*GroupConfig `json:"-"`
 }
@@ -106,6 +105,7 @@ type KafkaConfig struct {
 type ClickHouseConfig struct {
 	Cluster  string     `merge:"clickhouse.cluster"`
 	DB       string     `merge:"clickhouse.db"`
+	DbKey    string     `merge:"clickhouse.dbKey"`
 	Hosts    [][]string `merge:"clickhouse.shard"`
 	Port     int        `merge:"clickhouse.port"`
 	Username string     `merge:"clickhouse.username"`
