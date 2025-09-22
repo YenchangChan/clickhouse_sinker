@@ -24,7 +24,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -39,8 +38,6 @@ var (
 	Logger       *zap.Logger
 	logAtomLevel zap.AtomicLevel
 	logPaths     []string
-
-	re = regexp.MustCompile(`\$\{(.*?)\}`)
 )
 
 type CmdOptions struct {
@@ -351,7 +348,7 @@ func CompareClickHouseVersion(v1, v2 string) int {
 }
 
 func Key(s string) string {
-	return fmt.Sprintf("${%s}", s)
+	return "${" + s + "}"
 }
 
 func Value(val interface{}) string {
@@ -360,18 +357,36 @@ func Value(val interface{}) string {
 }
 
 func Replace(str, key string, val interface{}) string {
-	if ok := Match(str, key); ok {
-		return strings.ReplaceAll(str, Key(key), Value(val))
+	placeholder := Key(key)
+	if !strings.Contains(str, Key(key)) {
+		return str
 	}
-	return str
+
+	valueStr := fmt.Sprint(val)
+	if strings.Contains(valueStr, ".") {
+		valueStr = strings.ReplaceAll(valueStr, ".", "_")
+	}
+
+	return strings.ReplaceAll(str, placeholder, valueStr)
 }
 
 func Match(str, key string) bool {
-	vars := re.FindAllStringSubmatch(str, -1)
-	for _, v := range vars {
-		if key == v[1] {
-			return true
-		}
+	return strings.Contains(str, Key(key))
+}
+
+func ZeroValue(v interface{}) bool {
+	switch t := v.(type) {
+	case string:
+		return t == ""
+	case int, int8, int16, int32, int64:
+		return t == 0
+	case uint, uint8, uint16, uint32, uint64:
+		return t == 0
+	case float32, float64:
+		return t == 0
+	case bool:
+		return !t
+	default:
+		return false
 	}
-	return false
 }

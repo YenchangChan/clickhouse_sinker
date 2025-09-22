@@ -177,6 +177,7 @@ func (c *Consumer) processFetch() {
 		var wg sync.WaitGroup
 		c.dbMap.Range(func(key, value any) bool {
 			state := value.(*model.DbState)
+			util.Logger.Debug("flush to clickhouse", zap.String("dbkey", state.Name), zap.Int64("rows", state.BufLength))
 			c.tasks.Range(func(key, value any) bool {
 				// flush to shard, ck
 				task := value.(*Service)
@@ -191,6 +192,8 @@ func (c *Consumer) processFetch() {
 				task.sharder.Flush(c.ctx, &wg, *state)
 				return true
 			})
+			state.BufLength = 0
+			c.SetDbMap(state.Name, state)
 
 			c.mux.Lock()
 			c.numFlying++

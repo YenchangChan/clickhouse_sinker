@@ -18,7 +18,6 @@ package task
 import (
 	"fmt"
 	"math"
-	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -257,7 +256,7 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 				dim := service.dims[i]
 				val := model.GetValueByType(metric, dim)
 				if dim.IsDbKey {
-					if val != nil && !reflect.ValueOf(val).IsZero() {
+					if val != nil && !util.ZeroValue(val) {
 						key = util.Replace(service.consumer.sinker.curCfg.Clickhouse.DbKey, dim.SourceName, val)
 						found = true
 					}
@@ -330,7 +329,7 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 			} else {
 				val := model.GetValueByType(metric, dim)
 				if dim.IsDbKey {
-					if val != nil && !reflect.ValueOf(val).IsZero() {
+					if val != nil && !util.ZeroValue(val) {
 						key = util.Replace(service.consumer.sinker.curCfg.Clickhouse.DbKey, dim.SourceName, val)
 						found = true
 					}
@@ -363,8 +362,6 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 		if !found {
 			var ok bool
 			if state, ok = service.consumer.GetDbMap(key); !ok {
-				// util.Logger.Info("no db key found, using default db", zap.String("task", service.taskCfg.Name), zap.String("key", key))
-				// service.clickhouse.EnsureSchema(key)
 				state = &model.DbState{
 					Name:       key,
 					PrepareSQL: service.clickhouse.PrepareSQL,
