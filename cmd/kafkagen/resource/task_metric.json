@@ -1,0 +1,53 @@
+{
+    "clickhouse": {
+        "cluster": "test1",
+        "db": "default",
+        "dbKey": "sinker_${region}",
+        "hosts": [
+                    ["192.168.110.48", "192.168.110.49"],
+                    ["192.168.110.50", "192.168.110.51"]
+        ],
+        "port": 9000,
+        "username": "default",
+        "password": "123456",
+        "maxOpenConns": 5,
+        "retryTimes": 3
+    },
+    "kafka": {
+        "brokers": "192.168.101.95:9192",
+            "properties":{
+                  "heartbeat.interval.ms": 60000,
+                  "session.timeout.ms": 300000,
+                  "rebalance.timeout.ms": 300000,
+                  "request.timeout.ms": 120000,
+                  "max.poll.interval.ms": 30000
+            }
+    },
+    "reloadSeriesMapInterval": 86400,
+    "activeSeriesRange":3600, 
+    "tasks": [
+        {
+            "name": "sinker_test_metric",
+            "topic": "sinker_test_metric",
+            "consumerGroup": "sinker_test_metric_001",
+            "earliest": true,
+            "parser": "json",
+            "autoSchema": true,
+            "tableName": "metric",
+            "flushInterval": 10,
+            "bufferSize": 10000,
+            "prometheusSchema": true,
+            "promLabelsBlackList": "^(value|__help__|__type__|__series_key__|__item_id__|__item_key__|__item_name__|__template_id__|__template_name__|__parent_item_id__|__parent_key__|__metric_flag__|__agent_host__|__host_id__|__host_name__|__join_name__|__mgmt_id__|__field_key__|__ttl__|__value_flag__)$",
+            "dynamicSchema": {
+                "enable": true,
+                "blackList": "^@.*"
+            },
+            "excludeColumns": [
+                
+            ],
+      
+            "shardingKey": "__series_id__"
+        }
+    ],
+    "logLevel": "info"
+}

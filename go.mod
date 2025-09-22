@@ -8,9 +8,11 @@ require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.21.0
 	github.com/RoaringBitmap/roaring v1.7.0
 	github.com/YenchangChan/franz-go/pkg/sasl/kerberos v0.0.0-20231127011105-840a25342a2e
+	github.com/alecthomas/kingpin/v2 v2.3.2
 	github.com/avast/retry-go/v4 v4.5.1
 	github.com/bytedance/sonic v1.10.2
 	github.com/cespare/xxhash/v2 v2.2.0
+	github.com/drhodes/golorem v0.0.0-20220328165741-da82e5b29246
 	github.com/google/gops v0.3.28
 	github.com/hjson/hjson-go/v4 v4.4.0
 	github.com/jcmturner/gokrb5/v8 v8.4.4
@@ -37,6 +39,7 @@ require (
 
 require (
 	github.com/ClickHouse/ch-go v0.61.3 // indirect
+	github.com/alecthomas/units v0.0.0-20211218093645-b94a6e3cc137 // indirect
 	github.com/aliyun/alibaba-cloud-sdk-go v1.62.648 // indirect
 	github.com/andybalholm/brotli v1.1.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -74,6 +77,7 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/twmb/franz-go/pkg/kmsg v1.8.0 // indirect
+	github.com/xhit/go-str2duration/v2 v2.1.0 // indirect
 	go.opentelemetry.io/otel v1.24.0 // indirect
 	go.opentelemetry.io/otel/trace v1.24.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
