@@ -561,9 +561,10 @@ func (s *Sinker) initBmSeries() (err error) {
 	tables := make(map[string][]*Service)
 	for _, c := range s.consumers {
 		c.tasks.Range(func(key, value any) bool {
-			k := value.(*Service).clickhouse.GetSeriesQuotaKey()
+			service := value.(*Service)
+			k := service.clickhouse.GetSeriesQuotaKey(service.clickhouse.DbName)
 			if k != "" {
-				tables[k] = append(tables[k], value.(*Service))
+				tables[k] = append(tables[k], service)
 			}
 			return true
 		})
@@ -635,14 +636,18 @@ func (s *Sinker) reloadBmSeries() (err error) {
 	tables := make(map[string][]*Service)
 	for _, c := range s.consumers {
 		c.tasks.Range(func(key, value any) bool {
-			k := value.(*Service).clickhouse.GetSeriesQuotaKey()
-			if _, ok := sqMap[k]; ok {
-				tables[k] = append(tables[k], value.(*Service))
-			}
+			consumer := value.(*Service).consumer
+			consumer.dbMap.Range(func(dbKey, state any) bool {
+				dbName := dbKey.(string)
+				k := value.(*Service).clickhouse.GetSeriesQuotaKey(dbName)
+				if _, ok := sqMap[k]; ok {
+					tables[k] = append(tables[k], value.(*Service))
+				}
+				return true
+			})
 			return true
 		})
 	}
-
 	if len(tables) == 0 {
 		return
 	}

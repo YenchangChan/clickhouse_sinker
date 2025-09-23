@@ -430,7 +430,7 @@ func (c *ClickHouse) initSeriesSchema(conn *pool.Conn) (err error) {
 		}
 	}
 
-	sq, _ := SeriesQuotas.LoadOrStore(c.GetSeriesQuotaKey(),
+	sq, _ := SeriesQuotas.LoadOrStore(c.GetSeriesQuotaKey(c.DbName),
 		&model.SeriesQuota{
 			NextResetQuota: time.Now().Add(10 * time.Second),
 			Birth:          time.Now(),
@@ -709,12 +709,15 @@ func (c *ClickHouse) getDistTbls(table, clusterName string) (distTbls []DistTblI
 	return
 }
 
-func (c *ClickHouse) GetSeriesQuotaKey() string {
+func (c *ClickHouse) GetSeriesQuotaKey(db string) string {
+	if db == "" {
+		db = c.DbName
+	}
 	if c.taskCfg.PrometheusSchema {
 		if c.cfg.Clickhouse.Cluster != "" {
-			return c.DbName + "." + c.distSeriesTbls[len(c.distSeriesTbls)-1]
+			return db + "." + c.distSeriesTbls[len(c.distSeriesTbls)-1]
 		} else {
-			return c.DbName + "." + c.seriesTbl
+			return db + "." + c.seriesTbl
 		}
 	}
 	return ""
@@ -857,6 +860,20 @@ func (c *ClickHouse) EnsureSchema(database string) error {
 			util.Logger.Error(fmt.Sprintf("executing sql=> %s", createSql), zap.String("task", c.taskCfg.Name), zap.Error(err))
 		}
 	}
+
+	if c.taskCfg.PrometheusSchema {
+		sq, _ := SeriesQuotas.LoadOrStore(c.GetSeriesQuotaKey(database),
+			&model.SeriesQuota{
+				NextResetQuota: time.Now().Add(10 * time.Second),
+				Birth:          time.Now(),
+			})
+		seriesQuota := sq.(*model.SeriesQuota)
+		if seriesQuota.BmSeries == nil {
+			seriesQuota.BmSeries = make(map[int64]int64)
+		}
+		c.seriesQuota = seriesQuota
+	}
+
 	return nil
 }
 
