@@ -16,18 +16,14 @@ limitations under the License.
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
-	"net"
-	"net/http"
-	"net/http/pprof"
 	"os"
 	"path/filepath"
 	"strings"
 
 	cm "github.com/housepower/clickhouse_sinker/config_manager"
-	"github.com/housepower/clickhouse_sinker/health"
+	"github.com/housepower/clickhouse_sinker/mvc"
 	"github.com/housepower/clickhouse_sinker/task"
 	"github.com/housepower/clickhouse_sinker/util"
 	"go.uber.org/zap"
@@ -47,6 +43,7 @@ var (
 	httpAddr    string
 	httpMetrics = promhttp.Handler()
 	runner      *task.Sinker
+	server      *mvc.Service
 )
 
 func initCmdOptions() {
@@ -165,83 +162,6 @@ func main() {
 		}
 		httpPort = util.GetSpareTCPPort(httpPort)
 
-		// cmdOps.HTTPPort=0: disable the http server
-		if cmdOps.HTTPPort > 0 {
-			// Initialize http server for metrics and debug
-			mux := http.NewServeMux()
-			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-				_, _ = w.Write([]byte(`
-				<html><head><title>ClickHouse Sinker</title></head>
-				<body>
-					<h1>ClickHouse Sinker</h1>
-					<p><a href="/state">State</a></p>
-					<p><a href="/metrics">Metrics</a></p>
-					<p><a href="/ready">Ready</a></p>
-					<p><a href="/ready?full=1">Ready Full</a></p>
-					<p><a href="/live">Live</a></p>
-					<p><a href="/live?full=1">Live Full</a></p>
-					<p><a href="/debug/pprof/">pprof</a></p>
-				</body></html>`))
-			})
-
-			mux.HandleFunc("/state", func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				if runner != nil && runner.GetCurrentConfig() != nil {
-					var stateLags map[string]cm.StateLag
-					var bs []byte
-					var err error
-					if stateLags, err = cm.GetTaskStateAndLags(runner.GetCurrentConfig()); err == nil {
-						if bs, err = json.Marshal(stateLags); err == nil {
-							_, _ = w.Write(bs)
-						}
-					}
-				}
-			})
-			health.Health.AddLivenessCheck("task", func() error {
-				var err error
-				if runner != nil && runner.GetCurrentConfig() != nil {
-					var stateLags map[string]cm.StateLag
-					var count int
-					if stateLags, err = cm.GetTaskStateAndLags(runner.GetCurrentConfig()); err == nil {
-						for _, value := range stateLags {
-							if value.State == "Dead" {
-								count++
-							}
-						}
-						if count == len(stateLags) {
-							return fmt.Errorf("All task is Dead.")
-						}
-					} else {
-						return err
-					}
-				}
-				return nil
-			})
-			mux.Handle("/metrics", httpMetrics)
-			mux.HandleFunc("/ready", health.Health.ReadyEndpoint) // GET /ready?full=1
-			mux.HandleFunc("/live", health.Health.LiveEndpoint)   // GET /live?full=1
-			mux.HandleFunc("/debug/pprof/", pprof.Index)
-			mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-			mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-			mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-			mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-			mux.Handle("/debug/vars", http.DefaultServeMux)
-
-			httpAddr = fmt.Sprintf("%s:%d", httpHost, httpPort)
-			listener, err := net.Listen("tcp", httpAddr)
-			if err != nil {
-				return fmt.Errorf("failed to listen on %q: %w", httpAddr, err)
-			}
-
-			util.Logger.Info(fmt.Sprintf("Run http server at http://%s/", httpAddr))
-
-			go func() {
-				if err := http.Serve(listener, mux); err != nil {
-					util.Logger.Error("http.ListenAndServe failed", zap.Error(err))
-				}
-			}()
-		}
-
 		var rcm cm.RemoteConfManager
 		var properties map[string]interface{}
 		logDir := "."
@@ -282,12 +202,23 @@ func main() {
 			}
 		}
 		runner = task.NewSinker(rcm, httpAddr, &cmdOps)
+		// cmdOps.HTTPPort=0: disable the http server
+		if cmdOps.HTTPPort > 0 {
+			server = mvc.NewService(cmdOps, runner, httpHost, httpPort)
+			err := server.Start()
+			if err != nil {
+				return fmt.Errorf("failed to start http server: %w", err)
+			}
+		}
 		return runner.Init()
 	}, func() error {
 		runner.Run()
 		return nil
 	}, func() error {
 		runner.Close()
+		if server != nil {
+			server.Stop()
+		}
 		return nil
 	})
 }
