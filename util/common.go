@@ -26,6 +26,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -38,7 +39,13 @@ var (
 	Logger       *zap.Logger
 	logAtomLevel zap.AtomicLevel
 	logPaths     []string
+
+	startTime time.Time
 )
+
+func init() {
+	startTime = time.Now()
+}
 
 type CmdOptions struct {
 	ShowVer  bool
@@ -389,4 +396,110 @@ func ZeroValue(v interface{}) bool {
 	default:
 		return false
 	}
+}
+
+type VersionInfo struct {
+	Version   string
+	Commit    string
+	BuildTime string
+	GoVersion string
+}
+
+func GetProcessStartTime() int64 {
+	return startTime.Unix()
+}
+
+// GetCPUUsage returns the current CPU usage percentage
+// This is a simple implementation that works on most Unix-like systems
+func GetCPUUsage() (float64, error) {
+	// For a simple implementation, we'll use a basic approach
+	// In a production environment, you might want to use a more sophisticated method
+
+	// Read /proc/stat for system-wide CPU usage (Linux)
+	if _, err := os.Stat("/proc/stat"); err == nil {
+		return getCPUUsageLinux()
+	}
+
+	// For other systems, return 0 for now
+	// You could implement Windows/macOS specific methods here
+	return 0.0, nil
+}
+
+// getCPUUsageLinux reads CPU usage from /proc/stat on Linux systems
+func getCPUUsageLinux() (float64, error) {
+	// Read /proc/stat twice with a small interval to calculate usage
+	stat1, err := readProcStat()
+	if err != nil {
+		return 0.0, err
+	}
+
+	// Wait a short time
+	time.Sleep(100 * time.Millisecond)
+
+	stat2, err := readProcStat()
+	if err != nil {
+		return 0.0, err
+	}
+
+	// Calculate CPU usage percentage
+	totalDiff := stat2.total - stat1.total
+	idleDiff := stat2.idle - stat1.idle
+
+	if totalDiff == 0 {
+		return 0.0, nil
+	}
+
+	usage := 100.0 * (1.0 - float64(idleDiff)/float64(totalDiff))
+	return usage, nil
+}
+
+type cpuStat struct {
+	total uint64
+	idle  uint64
+}
+
+// readProcStat reads CPU statistics from /proc/stat
+func readProcStat() (*cpuStat, error) {
+	data, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return nil, err
+	}
+
+	lines := strings.Split(string(data), "\n")
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("empty /proc/stat")
+	}
+
+	// Parse the first line which contains overall CPU stats
+	fields := strings.Fields(lines[0])
+	if len(fields) < 5 || fields[0] != "cpu" {
+		return nil, fmt.Errorf("invalid /proc/stat format")
+	}
+
+	// CPU fields: user, nice, system, idle, iowait, irq, softirq, steal, guest, guest_nice
+	var values []uint64
+	for i := 1; i < len(fields) && i <= 10; i++ {
+		val, err := strconv.ParseUint(fields[i], 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, val)
+	}
+
+	if len(values) < 4 {
+		return nil, fmt.Errorf("insufficient CPU stat fields")
+	}
+
+	// Calculate total and idle
+	var total uint64
+	for _, val := range values {
+		total += val
+	}
+
+	idle := values[3] // idle is the 4th field (index 3)
+
+	return &cpuStat{
+		total: total,
+		idle:  idle,
+	}, nil
 }

@@ -27,6 +27,9 @@ type TaskDetailResp struct {
 
 type ProcInfoResp struct {
 	Version    string
+	BuildTime  string
+	Commit     string
+	GoVersion  string
 	Goroutines int
 	CPU        float64
 	Memory     uint64

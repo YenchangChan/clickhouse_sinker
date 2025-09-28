@@ -51,3 +51,11 @@ func (c *PprofController) Trace(ctx *gin.Context) {
 func (c *PprofController) Vars(ctx *gin.Context) {
 	http.DefaultServeMux.ServeHTTP(ctx.Writer, ctx.Request)
 }
+
+func (c *PprofController) Heap(ctx *gin.Context) {
+	pprof.Handler("heap").ServeHTTP(ctx.Writer, ctx.Request)
+}
+
+func (c *PprofController) Goroutine(ctx *gin.Context) {
+	pprof.Handler("goroutine").ServeHTTP(ctx.Writer, ctx.Request)
+}

@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClickHouse Sinker Web</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+        }
+
+        .header {
+            background: #B8860B;
+            color: white;
+            padding: 0 20px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid #9A7209;
+        }
+
+        .main-container {
+            display: flex;
+            height: calc(100vh - 60px);
+        }
+
+        .sidebar {
+            width: 200px;
+            background: #fafafa;
+            border-right: 1px solid #ddd;
+        }
+
+        .content {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .nav-item {
+            padding: 15px 20px;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+            transition: background-color 0.2s;
+        }
+
+        .nav-item:hover {
+            background: #f0f0f0;
+        }
+
+        .nav-item.active {
+            background: #B8860B;
+            color: white;
+            border-left: 3px solid #9A7209;
+        }
+
+        .card {
+            background: white;
+            border-radius: 4px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid #ddd;
+        }
+
+        .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .metric-card {
+            background: #B8860B;
+            color: white;
+            padding: 20px;
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        .metric-value {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .metric-label {
+            font-size: 13px;
+            opacity: 0.9;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: #666;
+            font-size: 18px;
+        }
+
+        .loading::before {
+            content: "加载中...";
+            display: block;
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        .task-item {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 10px;
+            background: #fafafa;
+        }
+
+        .task-item:hover {
+            background: white;
+        }
+
+        .task-name {
+            font-weight: bold;
+            color: #B8860B;
+            font-size: 16px;
+            margin-bottom: 8px;
+        }
+
+        .task-detail {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            font-size: 14px;
+        }
+
+        .task-detail div {
+            padding: 5px 0;
+        }
+
+        .task-type {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: normal;
+        }
+
+        .task-type.metric {
+            background: #FFF8DC;
+            color: #B8860B;
+            border: 1px solid #B8860B;
+        }
+
+        .task-type.log {
+            background: #F5F5F5;
+            color: #666;
+            border: 1px solid #999;
+        }
+
+        .btn {
+            background: #B8860B;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px;
+        }
+
+        .btn:hover {
+            background: #9A7209;
+        }
+
+        .btn-small {
+            background: #B8860B;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            margin: 2px;
+        }
+
+        .btn-small:hover {
+            background: #9A7209;
+        }
+
+        .task-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        .task-table th,
+        .task-table td {
+            padding: 12px 8px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .task-table th {
+            background: #f8f8f8;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .task-table tr:hover {
+            background: #f9f9f9;
+        }
+
+        .task-table .task-name {
+            font-weight: bold;
+            color: #B8860B;
+        }
+
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80%;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .modal-header h4 {
+            margin: 0;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #666;
+        }
+
+        .modal-close:hover {
+            color: #333;
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .modal-body pre {
+            background: #f8f8f8;
+            padding: 15px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            overflow-x: auto;
+            font-size: 12px;
+            line-height: 1.4;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            background: #4CAF50;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+
+            100% {
+                opacity: 1;
+            }
+        }
+
+        pre {
+            background: #f8f8f8;
+            color: #333;
+            padding: 15px;
+            border-radius: 3px;
+            border: 1px solid #ddd;
+            overflow-x: auto;
+            font-size: 12px;
+            line-height: 1.4;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .error-state {
+            text-align: center;
+            padding: 40px;
+            color: #f56565;
+            background: #fed7d7;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+
+        .success-state {
+            text-align: center;
+            padding: 20px;
+            color: #38a169;
+            background: #c6f6d5;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app">
+        <div class="header">
+            <h2>ClickHouse Sinker 管理界面</h2>
+        </div>
+        <div class="main-container">
+            <div class="sidebar">
+                <div class="nav-item" :class="{active: activeTab === 'overview'}" @click="setActiveTab('overview')">
+                    概览
+                </div>
+                <div class="nav-item" :class="{active: activeTab === 'tasks'}" @click="setActiveTab('tasks')">
+                    任务管理
+                </div>
+                <div class="nav-item" :class="{active: activeTab === 'config'}" @click="setActiveTab('config')">
+                    配置管理
+                </div>
+                <div class="nav-item" :class="{active: activeTab === 'debug'}" @click="setActiveTab('debug')">
+                    调试工具
+                </div>
+            </div>
+            <div class="content">
+                <div v-if="loading" class="loading">
+                    正在加载数据...
+                </div>
+
+                <!-- 概览页面 -->
+                <div v-if="activeTab === 'overview' && !loading">
+                    <h3>系统概览 <span v-if="loadingStates.overview" style="font-size: 14px; color: #666;">刷新中...</span>
+                    </h3>
+                    <div class="metric-grid">
+                        <div class="metric-card">
+                            <div class="metric-value">{{ procInfo.Version || 'N/A' }}</div>
+                            <div class="metric-label">Sinker版本</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-value">{{ procInfo.Goroutines || 0 }}</div>
+                            <div class="metric-label">Goroutines</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-value">{{ (procInfo.CPU || 0).toFixed(1) }}%</div>
+                            <div class="metric-label">CPU使用率</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-value">{{ formatMemory(procInfo.Memory || 0) }}</div>
+                            <div class="metric-label">内存使用</div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <h4>系统状态</h4>
+                        <p><span class="status-indicator"></span>服务运行正常</p>
+                        <p>任务总数: <strong>{{ tasks.length }}</strong></p>
+                        <p>运行时间: <strong>{{ formatUptime(procInfo.Uptime || 0) }}</strong></p>
+                        <p>启动时间: <strong>{{ formatStartTime(procInfo.StartTime || 0) }}</strong></p>
+                        <p>Go版本: <strong>{{ procInfo.GoVersion || 'N/A' }}</strong></p>
+                        <p>构建时间: <strong>{{ procInfo.BuildTime || 'N/A' }}</strong></p>
+                        <p>Commit: <strong>{{ formatCommit(procInfo.Commit) || 'N/A' }}</strong></p>
+                    </div>
+                </div>
+
+                <!-- 任务页面 -->
+                <div v-if="activeTab === 'tasks' && !loading">
+                    <h3>任务管理 <span v-if="loadingStates.tasks" style="font-size: 14px; color: #666;">加载中...</span></h3>
+                    <div class="card">
+                        <div
+                            style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                            <div><strong>任务总数:</strong> {{ tasks.length }}</div>
+                            <button class="btn" @click="fetchTasks">刷新任务</button>
+                        </div>
+
+                        <div v-if="tasks.length === 0" class="empty-state">
+                            暂无任务数据
+                        </div>
+
+                        <table v-else class="task-table">
+                            <thead>
+                                <tr>
+                                    <th>任务名</th>
+                                    <th>Topic</th>
+                                    <th>消费者组</th>
+                                    <th>表名</th>
+                                    <th>类型</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="task in tasks" :key="task.Name">
+                                    <td class="task-name">{{ task.Name }}</td>
+                                    <td>{{ task.Topic }}</td>
+                                    <td>{{ task.ConsumerGroup }}</td>
+                                    <td>{{ task.TableName }}</td>
+                                    <td>
+                                        <span :class="['task-type', task.PrometheusSchema ? 'metric' : 'log']">
+                                            {{ task.PrometheusSchema ? '指标' : '日志' }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <button class="btn-small" @click="showTaskDetail(task)">详情</button>
+                                        <button class="btn-small" @click="showTaskMetrics(task)">指标</button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 配置页面 -->
+                <div v-if="activeTab === 'config' && !loading">
+                    <h3>配置管理 <span v-if="loadingStates.config || loadingStates.cmdline"
+                            style="font-size: 14px; color: #666;">加载中...</span></h3>
+                    <div class="card">
+                        <h4>命令行参数</h4>
+                        <pre
+                            v-if="Object.keys(cmdlineConfig).length > 0">{{ JSON.stringify(cmdlineConfig, null, 2) }}</pre>
+                        <div v-else class="empty-state">暂无命令行参数数据</div>
+                    </div>
+                    <div class="card">
+                        <h4>系统配置</h4>
+                        <pre v-if="Object.keys(config).length > 0">{{ JSON.stringify(config, null, 2) }}</pre>
+                        <div v-else class="empty-state">暂无系统配置数据</div>
+                    </div>
+                    <button class="btn" @click="fetchConfig(); fetchCmdline()">刷新配置</button>
+                </div>
+
+                <!-- 调试工具页面 -->
+                <div v-if="activeTab === 'debug' && !loading">
+                    <h3>调试工具</h3>
+                    <div class="card">
+                        <h4>性能分析</h4>
+                        <button class="btn" @click="testAPI('/debug/pprof/heap', 'heap')">Heap信息</button>
+                        <button class="btn"
+                            @click="testAPI('/debug/pprof/goroutine?debug=1', 'goroutine')">Goroutine信息</button>
+                        <button class="btn" @click="testAPI('/api/v1/metrics/procinfo', 'proc')">进程信息</button>
+                        <button class="btn" @click="clearDebugInfo">清空输出</button>
+
+                        <div v-if="debugInfo" style="margin-top: 20px;">
+                            <h5>输出结果:</h5>
+                            <pre>{{ debugInfo }}</pre>
+                        </div>
+                        <div v-else class="empty-state">点击上方按钮获取调试信息</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 任务详情对话框 -->
+        <div v-if="taskDetailVisible" class="modal-overlay" @click="taskDetailVisible = false">
+            <div class="modal-content" @click.stop>
+                <div class="modal-header">
+                    <h4>任务详情</h4>
+                    <button class="modal-close" @click="taskDetailVisible = false">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <pre v-if="selectedTask">{{ JSON.stringify(selectedTask, null, 2) }}</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- 任务指标对话框 -->
+        <div v-if="taskMetricsVisible" class="modal-overlay" @click="taskMetricsVisible = false">
+            <div class="modal-content" @click.stop>
+                <div class="modal-header">
+                    <h4>任务指标</h4>
+                    <button class="modal-close" @click="taskMetricsVisible = false">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div v-if="selectedTask">
+                        <p><strong>任务名:</strong> {{ selectedTask.Name }}</p>
+                        <p><strong>Topic:</strong> {{ selectedTask.Topic }}</p>
+                        <p><strong>消费者组:</strong> {{ selectedTask.ConsumerGroup }}</p>
+                        <p><strong>表名:</strong> {{ selectedTask.TableName }}</p>
+                        <p><strong>类型:</strong> {{ selectedTask.PrometheusSchema ? '指标' : '日志' }}</p>
+                        <hr>
+                        <p><em>详细指标数据功能待实现...</em></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script>
+        console.log('🚀 Starting ClickHouse Sinker Web UI...');
+
+        window.addEventListener('load', function () {
+            if (typeof Vue === 'undefined') {
+                document.getElementById('app').innerHTML = '<div class="error-state">❌ Vue.js 加载失败</div>';
+                return;
+            }
+
+            const { createApp } = Vue;
+
+            createApp({
+                data() {
+                    return {
+                        activeTab: 'overview',
+                        procInfo: {},
+                        tasks: [],
+                        config: {},
+                        cmdlineConfig: {},
+                        debugInfo: '',
+                        loading: true,
+                        loadingStates: {
+                            overview: false,
+                            tasks: false,
+                            config: false,
+                            cmdline: false
+                        },
+                        selectedTask: null,
+                        taskDetailVisible: false,
+                        taskMetricsVisible: false
+                    };
+                },
+
+                mounted() {
+                    console.log('✅ Vue app mounted successfully!');
+                    this.loadData();
+
+                    // 定时刷新概览数据
+                    setInterval(() => {
+                        if (this.activeTab === 'overview') {
+                            this.fetchProcInfo();
+                        }
+                    }, 30000); // 30秒刷新一次
+                },
+
+                methods: {
+                    setActiveTab(tab) {
+                        console.log('📍 Switching to tab:', tab);
+                        this.activeTab = tab;
+
+                        // 根据切换的标签页调用相应的API
+                        switch (tab) {
+                            case 'overview':
+                                // 概览页面总是刷新数据
+                                this.fetchProcInfo();
+                                break;
+                            case 'tasks':
+                                // 任务页面总是刷新数据
+                                this.fetchTasks();
+                                break;
+                            case 'config':
+                                // 配置页面总是刷新数据
+                                this.fetchConfig();
+                                this.fetchCmdline();
+                                break;
+                            case 'debug':
+                                // 调试页面不需要自动加载数据
+                                break;
+                        }
+                    },
+
+                    async loadData() {
+                        console.log('📡 Loading initial data...');
+                        this.loading = true;
+
+                        try {
+                            await Promise.all([
+                                this.fetchProcInfo(),
+                                this.fetchTasks(),
+                                this.fetchConfig(),
+                                this.fetchCmdline()
+                            ]);
+                            console.log('✅ All data loaded successfully');
+                        } catch (error) {
+                            console.error('❌ Error loading data:', error);
+                        } finally {
+                            this.loading = false;
+                        }
+                    },
+
+                    async fetchProcInfo() {
+                        this.loadingStates.overview = true;
+                        try {
+                            console.log('📊 Fetching proc info...');
+                            const response = await fetch('/api/v1/metrics/procinfo');
+                            const data = await response.json();
+
+                            if (data.retCode === '0000' && data.entity) {
+                                this.procInfo = data.entity;
+                                console.log('✅ Proc info updated:', data.entity);
+                            } else {
+                                console.warn('⚠️ Proc info API returned error:', data.retMsg);
+                            }
+                        } catch (error) {
+                            console.error('❌ Error fetching proc info:', error);
+                        } finally {
+                            this.loadingStates.overview = false;
+                        }
+                    },
+
+                    async fetchTasks() {
+                        this.loadingStates.tasks = true;
+                        try {
+                            console.log('📋 Fetching tasks...');
+                            const response = await fetch('/api/v1/tasks');
+                            const data = await response.json();
+
+                            if (data.retCode === '0000' && data.entity) {
+                                this.tasks = data.entity.Tasks || [];
+                                console.log('✅ Tasks updated:', this.tasks.length, 'tasks');
+                            } else {
+                                console.warn('⚠️ Tasks API returned error:', data.retMsg);
+                                this.tasks = [];
+                            }
+                        } catch (error) {
+                            console.error('❌ Error fetching tasks:', error);
+                            this.tasks = [];
+                        } finally {
+                            this.loadingStates.tasks = false;
+                        }
+                    },
+
+                    async fetchConfig() {
+                        this.loadingStates.config = true;
+                        try {
+                            console.log('⚙️ Fetching config...');
+                            const response = await fetch('/api/v1/config');
+                            const data = await response.json();
+
+                            if (data.retCode === '0000' && data.entity) {
+                                this.config = data.entity;
+                                console.log('✅ Config updated');
+                            } else {
+                                console.warn('⚠️ Config API returned error:', data.retMsg);
+                            }
+                        } catch (error) {
+                            console.error('❌ Error fetching config:', error);
+                        } finally {
+                            this.loadingStates.config = false;
+                        }
+                    },
+
+                    async fetchCmdline() {
+                        this.loadingStates.cmdline = true;
+                        try {
+                            console.log('💻 Fetching cmdline config...');
+                            const response = await fetch('/api/v1/cmdline');
+                            const data = await response.json();
+
+                            if (data.retCode === '0000' && data.entity) {
+                                this.cmdlineConfig = data.entity;
+                                console.log('✅ Cmdline config updated');
+                            } else {
+                                console.warn('⚠️ Cmdline API returned error:', data.retMsg);
+                            }
+                        } catch (error) {
+                            console.error('❌ Error fetching cmdline:', error);
+                        } finally {
+                            this.loadingStates.cmdline = false;
+                        }
+                    },
+
+                    async testAPI(url, type) {
+                        try {
+                            console.log('🔍 Testing API:', url);
+                            const response = await fetch(url);
+                            const text = await response.text();
+
+                            this.debugInfo = `=== ${type.toUpperCase()} INFO ===\n${text}`;
+                            console.log('✅ API test successful:', type);
+                        } catch (error) {
+                            this.debugInfo = `❌ Error fetching ${type}: ${error.message}`;
+                            console.error('❌ API test failed:', error);
+                        }
+                    },
+
+                    clearDebugInfo() {
+                        this.debugInfo = '';
+                    },
+
+                    formatMemory(bytes) {
+                        if (!bytes || bytes === 0) return '0 B';
+                        const k = 1024;
+                        const sizes = ['B', 'KB', 'MB', 'GB'];
+                        const i = Math.floor(Math.log(bytes) / Math.log(k));
+                        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+                    },
+
+                    formatUptime(seconds) {
+                        if (!seconds || seconds === 0) return '0s';
+                        const days = Math.floor(seconds / 86400);
+                        const hours = Math.floor((seconds % 86400) / 3600);
+                        const minutes = Math.floor((seconds % 3600) / 60);
+                        const secs = seconds % 60;
+
+                        let result = '';
+                        if (days > 0) result += `${days}d `;
+                        if (hours > 0) result += `${hours}h `;
+                        if (minutes > 0) result += `${minutes}m `;
+                        if (secs > 0) result += `${secs}s`;
+
+                        return result.trim() || '0s';
+                    },
+
+                    formatStartTime(timestamp) {
+                        if (!timestamp || timestamp === 0) return 'N/A';
+                        const date = new Date(timestamp * 1000);
+                        return date.toLocaleString();
+                    },
+
+                    formatCommit(commit) {
+                        if (!commit || commit === '') return 'N/A';
+                        // 显示commit的前8位字符
+                        return commit.length > 8 ? commit.substring(0, 8) : commit;
+                    },
+
+                    showTaskDetail(task) {
+                        this.selectedTask = task;
+                        this.taskDetailVisible = true;
+                    },
+
+                    showTaskMetrics(task) {
+                        this.selectedTask = task;
+                        this.taskMetricsVisible = true;
+                    }
+                }
+            }).mount('#app');
+        });
+    </script>
+</body>
+
+</html>

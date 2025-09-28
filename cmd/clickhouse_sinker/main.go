@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	cm "github.com/housepower/clickhouse_sinker/config_manager"
@@ -44,6 +45,12 @@ var (
 	httpMetrics = promhttp.Handler()
 	runner      *task.Sinker
 	server      *mvc.Service
+	v           = util.VersionInfo{
+		Version:   version,
+		BuildTime: date,
+		Commit:    commit,
+		GoVersion: runtime.Version(),
+	}
 )
 
 func initCmdOptions() {
@@ -125,8 +132,8 @@ func initCmdOptions() {
 	}
 }
 
-func getVersion() string {
-	return fmt.Sprintf("version %s, commit %s, date %s, builtBy %s, pid %v", version, commit, date, builtBy, os.Getpid())
+func getVersion(v util.VersionInfo) string {
+	return fmt.Sprintf("version %s, commit %s, date %s, go-version %s , pid %v", v.Version, v.Commit, v.BuildTime, v.GoVersion, os.Getpid())
 }
 
 func init() {
@@ -138,7 +145,7 @@ func init() {
 	logPaths := strings.Split(cmdOps.LogPaths, ",")
 	util.InitLogger(logPaths)
 	util.SetLogLevel(cmdOps.LogLevel)
-	util.Logger.Info(getVersion())
+	util.Logger.Info(getVersion(v))
 	if cmdOps.ShowVer {
 		os.Exit(0)
 	}
@@ -204,7 +211,7 @@ func main() {
 		runner = task.NewSinker(rcm, httpAddr, &cmdOps)
 		// cmdOps.HTTPPort=0: disable the http server
 		if cmdOps.HTTPPort > 0 {
-			server = mvc.NewService(cmdOps, runner, httpHost, httpPort)
+			server = mvc.NewService(cmdOps, runner, httpHost, httpPort, v)
 			err := server.Start()
 			if err != nil {
 				return fmt.Errorf("failed to start http server: %w", err)

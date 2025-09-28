@@ -7,10 +7,10 @@ import (
 	"github.com/housepower/clickhouse_sinker/util"
 )
 
-func InitRouterV1(groupV1 *gin.RouterGroup, cmdOps util.CmdOptions, runner *task.Sinker) {
+func InitRouterV1(groupV1 *gin.RouterGroup, cmdOps util.CmdOptions, runner *task.Sinker, v util.VersionInfo) {
 	cfgController := controller.NewConfigController(cmdOps, runner)
 	taskController := controller.NewTaskController(runner)
-	metricController := controller.NewMetricController(runner)
+	metricController := controller.NewMetricController(runner, v)
 
 	groupV1.GET("/config", cfgController.GetConfig)
 	groupV1.GET("/cmdline", cfgController.GetCmdLine)

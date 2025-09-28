@@ -2,7 +2,9 @@ package mvc
 
 import (
 	"context"
+	"embed"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"runtime/debug"
@@ -15,20 +17,25 @@ import (
 	"go.uber.org/zap"
 )
 
+//go:embed dist/*
+var staticFiles embed.FS
+
 type Service struct {
-	cmdOps util.CmdOptions
-	runner *task.Sinker
-	host   string
-	port   int
-	svr    *http.Server
+	cmdOps  util.CmdOptions
+	runner  *task.Sinker
+	host    string
+	port    int
+	svr     *http.Server
+	version util.VersionInfo
 }
 
-func NewService(cmdOps util.CmdOptions, runner *task.Sinker, httpHost string, httpPort int) *Service {
+func NewService(cmdOps util.CmdOptions, runner *task.Sinker, httpHost string, httpPort int, v util.VersionInfo) *Service {
 	return &Service{
-		cmdOps: cmdOps,
-		runner: runner,
-		host:   httpHost,
-		port:   httpPort,
+		cmdOps:  cmdOps,
+		runner:  runner,
+		host:    httpHost,
+		port:    httpPort,
+		version: v,
 	}
 }
 
@@ -40,9 +47,12 @@ func (s *Service) Start() (err error) {
 
 	PprofRouter(r.Group("/"))
 
+	// 静态文件服务
+	s.setupStaticRoutes(r)
+
 	groupApi := r.Group("/api")
 	groupV1 := groupApi.Group("/v1")
-	InitRouterV1(groupV1, s.cmdOps, s.runner)
+	InitRouterV1(groupV1, s.cmdOps, s.runner, s.version)
 	bind := net.JoinHostPort(s.host, fmt.Sprintf("%d", s.port))
 	s.svr = &http.Server{
 		Addr:         bind,
@@ -61,6 +71,31 @@ func (s *Service) Start() (err error) {
 	}()
 
 	return nil
+}
+
+func (s *Service) setupStaticRoutes(r *gin.Engine) {
+	// 尝试使用嵌入的静态文件
+	distFS, err := fs.Sub(staticFiles, "dist")
+	if err == nil {
+		// 使用嵌入的静态文件
+		r.StaticFS("/static", http.FS(distFS))
+		r.GET("/", func(c *gin.Context) {
+			data, err := staticFiles.ReadFile("dist/index.html")
+			if err != nil {
+				c.String(http.StatusNotFound, "Page not found")
+				return
+			}
+			c.Data(http.StatusOK, "text/html; charset=utf-8", data)
+		})
+		util.Logger.Info("Using embedded static files")
+	} else {
+		// 回退到文件系统
+		r.Static("/static", "./mvc/static")
+		r.GET("/", func(c *gin.Context) {
+			c.Redirect(http.StatusMovedPermanently, "/static/")
+		})
+		util.Logger.Info("Using filesystem static files")
+	}
 }
 
 func (s *Service) Stop() error {

@@ -17,11 +17,11 @@ pre:
 	go mod tidy
 
 .PHONY: build
-build: pre
+build: pre ui
 	$(GOBUILD) -ldflags '$(SINKER_LDFLAGS)' -o bin/ ./...
 
 .PHONY: debug
-debug: pre
+debug: pre ui
 	$(GOBUILD) -ldflags '$(SINKER_LDFLAGS)' -gcflags "all=-N -l" -o bin/ ./...
 
 .PHONY: benchtest
@@ -45,6 +45,20 @@ lint:
 .PHONY: run
 run: pre
 	go run cmd/clickhouse_sinker/main.go --local-cfg-file docker/test_dynamic_schema.hjson
+
+.PHONY: ui
+ui: ui-clean
+	@echo "Building UI assets..."
+	@mkdir -p mvc/dist
+	@cp mvc/static/index.html mvc/dist/
+	@echo "UI assets built successfully in mvc/dist/"
+	@echo "Single-file application ready for embedding"
+
+.PHONY: ui-clean
+ui-clean:
+	@echo "Cleaning UI assets..."
+	@rm -rf mvc/dist
+	@echo "UI assets cleaned."
 
 .PHONY: release
 release:
