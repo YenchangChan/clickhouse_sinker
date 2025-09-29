@@ -211,7 +211,11 @@ func main() {
 		runner = task.NewSinker(rcm, httpAddr, &cmdOps)
 		// cmdOps.HTTPPort=0: disable the http server
 		if cmdOps.HTTPPort > 0 {
-			server = mvc.NewService(cmdOps, runner, httpHost, httpPort, v)
+			ops := cmdOps
+			if rcm == nil {
+				ops.LocalCfgFile = ""
+			}
+			server = mvc.NewService(ops, runner, httpHost, httpPort, v)
 			err := server.Start()
 			if err != nil {
 				return fmt.Errorf("failed to start http server: %w", err)

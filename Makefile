@@ -51,8 +51,16 @@ ui: ui-clean
 	@echo "Building UI assets..."
 	@mkdir -p mvc/dist
 	@cp mvc/static/index.html mvc/dist/
+	@mkdir -p mvc/dist/styles
+	@cp mvc/static/styles/main.css mvc/dist/styles/
+	@mkdir -p mvc/dist/js
+	@cp mvc/static/js/*.js mvc/dist/js/
+	@mkdir -p mvc/dist/components
+	@cp mvc/static/components/*.js mvc/dist/components/
+	@mkdir -p mvc/dist/views
+	@cp mvc/static/views/*.js mvc/dist/views/
 	@echo "UI assets built successfully in mvc/dist/"
-	@echo "Single-file application ready for embedding"
+	@echo "Application with all static assets ready for embedding"
 
 .PHONY: ui-clean
 ui-clean:

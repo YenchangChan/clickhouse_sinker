@@ -194,6 +194,7 @@ type TaskConfig struct {
 	BufferSize    int     `json:"bufferSize,omitempty"`
 	TimeZone      string  `json:"timeZone"`
 	TimeUnit      float64 `json:"timeUnit"`
+	LastUpdate    int64   `json:"-"`
 }
 
 type GroupConfig struct {

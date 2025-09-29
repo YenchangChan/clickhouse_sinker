@@ -16,8 +16,22 @@ type CmdLineResp struct {
 	util.CmdOptions
 }
 
+type Task struct {
+	Name          string
+	Cluster       string
+	Table         string
+	Topic         string
+	ConsumerGroup string
+	Type          string
+	ColPolicy     string
+	Status        string
+	Rate          int
+	Lag           int64
+	LastUpdate    int64
+}
+
 type TaskResp struct {
-	Tasks []*config.TaskConfig
+	Tasks []Task
 	Total int
 }
 

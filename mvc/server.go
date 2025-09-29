@@ -7,7 +7,9 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -45,14 +47,16 @@ func (s *Service) Start() (err error) {
 	r.Use(ginLoggerToFile())
 	r.Use(gin.CustomRecoveryWithWriter(nil, handlePanic))
 
-	PprofRouter(r.Group("/"))
-
-	// 静态文件服务
-	s.setupStaticRoutes(r)
-
+	// API路由
 	groupApi := r.Group("/api")
 	groupV1 := groupApi.Group("/v1")
 	InitRouterV1(groupV1, s.cmdOps, s.runner, s.version)
+
+	// pprof路由 - 直接挂载到根路径的特定子路径
+	PprofRouter(r.Group(""))
+
+	// 静态文件服务 - 使用不冲突的方式配置
+	s.setupStaticRoutes(r)
 	bind := net.JoinHostPort(s.host, fmt.Sprintf("%d", s.port))
 	s.svr = &http.Server{
 		Addr:         bind,
@@ -74,26 +78,156 @@ func (s *Service) Start() (err error) {
 }
 
 func (s *Service) setupStaticRoutes(r *gin.Engine) {
+	// 配置静态文件服务到内部路径，但不直接暴露给用户
 	// 尝试使用嵌入的静态文件
 	distFS, err := fs.Sub(staticFiles, "dist")
 	if err == nil {
-		// 使用嵌入的静态文件
-		r.StaticFS("/static", http.FS(distFS))
+		// 注册静态文件系统，但不直接挂载到根路径
+		staticFS := http.FS(distFS)
+
+		// 为根路径添加处理函数，返回index.html
 		r.GET("/", func(c *gin.Context) {
-			data, err := staticFiles.ReadFile("dist/index.html")
+			f, err := staticFS.Open("index.html")
 			if err != nil {
-				c.String(http.StatusNotFound, "Page not found")
+				c.String(http.StatusNotFound, "Not found")
 				return
 			}
-			c.Data(http.StatusOK, "text/html; charset=utf-8", data)
+			defer f.Close()
+
+			c.DataFromReader(http.StatusOK, -1, "text/html; charset=utf-8", f, nil)
 		})
+
+		// 为所有其他路径提供静态文件服务，但避免与API和pprof路由冲突
+		r.NoRoute(func(c *gin.Context) {
+			path := c.Request.URL.Path
+			// 避免处理API和pprof相关路径
+			if strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/metrics") ||
+				strings.HasPrefix(path, "/pprof/") || strings.HasPrefix(path, "/debug/") {
+				c.String(http.StatusNotFound, "Not found")
+				return
+			}
+
+			// 尝试打开请求的文件
+			f, err := staticFS.Open(path[1:]) // 去掉前导斜杠
+			if err != nil {
+				// 如果文件不存在，返回index.html以支持单页应用路由
+				f, err := staticFS.Open("index.html")
+				if err != nil {
+					c.String(http.StatusNotFound, "Not found")
+					return
+				}
+				defer f.Close()
+				c.DataFromReader(http.StatusOK, -1, "text/html; charset=utf-8", f, nil)
+				return
+			}
+			defer f.Close()
+
+			// 获取文件信息以确定内容类型
+			fi, err := f.Stat()
+			if err != nil {
+				c.String(http.StatusInternalServerError, "Internal server error")
+				return
+			}
+
+			// 设置适当的内容类型
+			contentType := "application/octet-stream"
+			ext := filepath.Ext(path)
+			switch ext {
+			case ".html":
+				contentType = "text/html; charset=utf-8"
+			case ".css":
+				contentType = "text/css"
+			case ".js":
+				contentType = "application/javascript"
+			case ".json":
+				contentType = "application/json"
+			case ".png":
+				contentType = "image/png"
+			case ".jpg", ".jpeg":
+				contentType = "image/jpeg"
+			case ".gif":
+				contentType = "image/gif"
+			case ".svg":
+				contentType = "image/svg+xml"
+			}
+
+			c.DataFromReader(http.StatusOK, fi.Size(), contentType, f, nil)
+		})
+
 		util.Logger.Info("Using embedded static files")
 	} else {
 		// 回退到文件系统
-		r.Static("/static", "./mvc/static")
+		staticDir := http.Dir("./mvc/static")
+
+		// 为根路径添加处理函数，返回index.html
 		r.GET("/", func(c *gin.Context) {
-			c.Redirect(http.StatusMovedPermanently, "/static/")
+			f, err := staticDir.Open("index.html")
+			if err != nil {
+				c.String(http.StatusNotFound, "Not found")
+				return
+			}
+			defer f.Close()
+
+			c.DataFromReader(http.StatusOK, -1, "text/html; charset=utf-8", f, nil)
 		})
+
+		// 为所有其他路径提供静态文件服务，但避免与API和pprof路由冲突
+		r.NoRoute(func(c *gin.Context) {
+			path := c.Request.URL.Path
+			// 避免处理API和pprof相关路径
+			if strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/metrics") ||
+				strings.HasPrefix(path, "/pprof/") || strings.HasPrefix(path, "/debug/") {
+				c.String(http.StatusNotFound, "Not found")
+				return
+			}
+
+			// 尝试打开请求的文件
+			f, err := staticDir.Open(path[1:]) // 去掉前导斜杠
+			if err != nil {
+				// 如果文件不存在，返回index.html以支持单页应用路由
+				f, err := staticDir.Open("index.html")
+				if err != nil {
+					c.String(http.StatusNotFound, "Not found")
+					return
+				}
+				defer f.Close()
+				c.DataFromReader(http.StatusOK, -1, "text/html; charset=utf-8", f, nil)
+				return
+			}
+			defer f.Close()
+
+			// 获取文件信息以确定内容类型
+			fi, err := f.Stat()
+			if err != nil {
+				c.String(http.StatusInternalServerError, "Internal server error")
+				return
+			}
+
+			// 设置适当的内容类型
+			contentType := "application/octet-stream"
+			ext := filepath.Ext(path)
+			switch ext {
+			case ".html":
+				contentType = "text/html; charset=utf-8"
+			case ".css":
+				contentType = "text/css"
+			case ".js":
+				contentType = "application/javascript"
+			case ".json":
+				contentType = "application/json"
+			case ".png":
+				contentType = "image/png"
+			case ".jpg", ".jpeg":
+				contentType = "image/jpeg"
+			case ".gif":
+				contentType = "image/gif"
+			case ".svg":
+				contentType = "image/svg+xml"
+			}
+
+			c.DataFromReader(http.StatusOK, fi.Size(), contentType, f, nil)
+		})
+
 		util.Logger.Info("Using filesystem static files")
 	}
 }
