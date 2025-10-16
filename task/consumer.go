@@ -137,13 +137,26 @@ func (c *Consumer) cleanupFn() {
 	})
 	wg.Wait()
 
-	// ensure the completion of offset submission
+	// ensure the completion of offset submission with timeout
 	c.mux.Lock()
+	defer c.mux.Unlock()
+
+	timeout := time.After(30 * time.Second) // 30秒超时
 	for c.numFlying != 0 {
 		util.Logger.Debug("draining flying pending commits", zap.String("consumergroup", c.grpConfig.Name), zap.Int32("pending", c.numFlying))
-		c.commitDone.Wait()
+		select {
+		case <-c.ctx.Done():
+			util.Logger.Warn("context cancelled while waiting for pending commits", zap.String("consumergroup", c.grpConfig.Name))
+			return
+		case <-timeout:
+			util.Logger.Warn("timeout waiting for pending commits, forcing cleanup", zap.String("consumergroup", c.grpConfig.Name))
+			c.numFlying = 0
+			return
+		default:
+			util.Logger.Debug("waiting for pending commits", zap.String("consumergroup", c.grpConfig.Name))
+			c.commitDone.Wait()
+		}
 	}
-	c.mux.Unlock()
 
 	// cleanup dbmap
 	c.dbMap.Range(func(key, value any) bool {
