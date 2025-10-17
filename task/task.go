@@ -104,7 +104,7 @@ func NewTaskService(cfg *config.Config, taskCfg *config.TaskConfig, c *Consumer)
 		pp:         pp,
 		taskCfg:    taskCfg,
 		consumer:   c,
-		colKeys:    map[string]*ColKeys{},
+		colKeys:    make(map[string]*ColKeys),
 	}
 	if taskCfg.DynamicSchema.WhiteList != "" {
 		service.whiteList = regexp.MustCompile(taskCfg.DynamicSchema.WhiteList)
@@ -126,6 +126,9 @@ func (service *Service) copyColKeys(dbkey string) {
 		colKey.knownKeys.Store(key, nil)
 		return true
 	})
+	if service.colKeys == nil {
+		service.colKeys = make(map[string]*ColKeys)
+	}
 	service.colKeys[dbkey] = colKey
 }
 
