@@ -183,7 +183,7 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 	statistics.ConsumeMsgsTotal.WithLabelValues(taskCfg.Name).Inc()
 	var err error
 	var row *model.Row
-	var key string
+	var state *model.DbState
 	var foundNewKeys bool
 	var metric model.Metric
 
@@ -200,17 +200,25 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 		}
 		return nil
 	} else {
-		key, row = service.metric2Row(metric, msg)
+		state, row = service.metric2Row(metric, msg)
 		if row == nil {
 			return nil
 		}
+		if state == nil {
+			return nil
+		}
+		if state.NewKey {
+			service.dynamicSchemaLock.Lock()
+			service.clickhouse.EnsureSchema(state.Name)
+			service.dynamicSchemaLock.Unlock()
+		}
 		if taskCfg.DynamicSchema.Enable {
 			service.dynamicSchemaLock.Lock()
-			colKey := service.colKeys[key]
+			colKey := service.colKeys[state.Name]
 			if colKey == nil {
-				util.Logger.Info("debug111 getNewKeys", zap.String("dbkey", key))
-				service.copyColKeys(key)
-				colKey = service.colKeys[key]
+				util.Logger.Info("debug111 getNewKeys", zap.String("dbkey", state.Name))
+				service.copyColKeys(state.Name)
+				colKey = service.colKeys[state.Name]
 			}
 			foundNewKeys = metric.GetNewKeys(&colKey.knownKeys, &colKey.newKeys, &colKey.warnKeys, service.whiteList, service.blackList, msg.Partition, msg.Offset)
 			service.dynamicSchemaLock.Unlock()
@@ -233,7 +241,7 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 				go service.consumer.restart()
 			}
 			flushFn()
-			if err = service.clickhouse.ChangeSchema(&service.newKeys); err != nil {
+			if err = service.clickhouse.ChangeSchema(state.Name, &service.newKeys); err != nil {
 				util.Logger.Fatal("clickhouse.ChangeSchema failed", zap.String("task", taskCfg.Name), zap.Error(err))
 			}
 			cloneTask(service, nil)
@@ -251,13 +259,13 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 		} else {
 			msgRow.Shard = int(msgRow.Msg.Offset * (int64(msgRow.Msg.Partition + 1)) >> service.offShift % int64(service.sharder.shards))
 		}
-		service.sharder.PutElement(key, &msgRow)
+		service.sharder.PutElement(state.Name, &msgRow)
 	}
 
 	return nil
 }
 
-func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage) (string, *model.Row) {
+func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage) (*model.DbState, *model.Row) {
 	key := service.clickhouse.DbName
 	var state *model.DbState
 	if service.idxSerID >= 0 {
@@ -326,7 +334,7 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 			service.consumer.SetDbMap(key, state)
 			row[service.idxSerID+2] = fmt.Sprintf("{%s}", strings.Join(labels, ", "))
 		}
-		return key, &row
+		return state, &row
 	} else {
 		var shardingVal uint64
 		if len(service.clickhouse.SortingKeys) > 0 {
@@ -384,7 +392,7 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 						zap.Int64("offset", msg.Offset),
 						zap.String("key", string(msg.Key)),
 						zap.Time("timestamp", *msg.Timestamp))
-					return key, nil
+					return state, nil
 				}
 				row = append(row, val)
 			}
@@ -402,6 +410,6 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 		atomic.AddInt64(&state.BufLength, 1)
 		service.consumer.SetDbMap(key, state)
 
-		return key, &row
+		return state, &row
 	}
 }

@@ -561,7 +561,7 @@ func (c *ClickHouse) initSchema() (err error) {
 	return nil
 }
 
-func (c *ClickHouse) ChangeSchema(newKeys *sync.Map) (err error) {
+func (c *ClickHouse) ChangeSchema(dbkey string, newKeys *sync.Map) (err error) {
 	var onCluster string
 	taskCfg := c.taskCfg
 	chCfg := &c.cfg.Clickhouse
@@ -636,7 +636,7 @@ func (c *ClickHouse) ChangeSchema(newKeys *sync.Map) (err error) {
 		version = "1.0.0.0"
 	}
 	alterTable := func(tbl, col string) error {
-		query := fmt.Sprintf("ALTER TABLE `%s`.`%s` %s %s", c.DbName, tbl, onCluster, col)
+		query := fmt.Sprintf("ALTER TABLE `%s`.`%s` %s %s", dbkey, tbl, onCluster, col)
 		if util.CompareClickHouseVersion(version, "23.3") >= 0 {
 			query += " SETTINGS alter_sync = 0"
 		}
