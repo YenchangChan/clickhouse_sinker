@@ -36,6 +36,14 @@ import (
 	"golang.org/x/time/rate"
 )
 
+type ColKeys struct {
+	dbkey      string
+	knownKeys  sync.Map
+	newKeys    sync.Map
+	warnKeys   sync.Map
+	cntNewKeys int32 // size of newKeys
+}
+
 // TaskService holds the configuration for each task
 type Service struct {
 	clickhouse *output.ClickHouse
@@ -50,10 +58,12 @@ type Service struct {
 	idxSerID int
 	nameKey  string
 
-	knownKeys  sync.Map
-	newKeys    sync.Map
-	warnKeys   sync.Map
-	cntNewKeys int32 // size of newKeys
+	colKeys           map[string]*ColKeys
+	dynamicSchemaLock sync.Mutex
+	knownKeys         sync.Map
+	newKeys           sync.Map
+	warnKeys          sync.Map
+	cntNewKeys        int32 // size of newKeys
 
 	sharder  *Sharder
 	limiter  *rate.Limiter //作用：控制打日志的频率
@@ -94,6 +104,7 @@ func NewTaskService(cfg *config.Config, taskCfg *config.TaskConfig, c *Consumer)
 		pp:         pp,
 		taskCfg:    taskCfg,
 		consumer:   c,
+		colKeys:    map[string]*ColKeys{},
 	}
 	if taskCfg.DynamicSchema.WhiteList != "" {
 		service.whiteList = regexp.MustCompile(taskCfg.DynamicSchema.WhiteList)
@@ -105,6 +116,17 @@ func NewTaskService(cfg *config.Config, taskCfg *config.TaskConfig, c *Consumer)
 		service.lblBlkList = regexp.MustCompile(taskCfg.PromLabelsBlackList)
 	}
 	return
+}
+
+func (service *Service) copyColKeys(dbkey string) {
+	colKey := &ColKeys{}
+	util.Logger.Info("debug111 service.colKeys", zap.String("dbkey", dbkey))
+	colKey.cntNewKeys = atomic.LoadInt32(&service.cntNewKeys)
+	service.knownKeys.Range(func(key, value interface{}) bool {
+		colKey.knownKeys.Store(key, nil)
+		return true
+	})
+	service.colKeys[dbkey] = colKey
 }
 
 // Init initializes the kafak and clickhouse task associated with this service
@@ -183,7 +205,15 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 			return nil
 		}
 		if taskCfg.DynamicSchema.Enable {
-			foundNewKeys = metric.GetNewKeys(&service.knownKeys, &service.newKeys, &service.warnKeys, service.whiteList, service.blackList, msg.Partition, msg.Offset)
+			service.dynamicSchemaLock.Lock()
+			colKey := service.colKeys[key]
+			if colKey == nil {
+				util.Logger.Info("debug111 getNewKeys", zap.String("dbkey", key))
+				service.copyColKeys(key)
+				colKey = service.colKeys[key]
+			}
+			foundNewKeys = metric.GetNewKeys(&colKey.knownKeys, &colKey.newKeys, &colKey.warnKeys, service.whiteList, service.blackList, msg.Partition, msg.Offset)
+			service.dynamicSchemaLock.Unlock()
 		}
 	}
 	// WARNNING: metric.GetXXX may depend on p. Don't call them after p been freed.
