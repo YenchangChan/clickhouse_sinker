@@ -201,7 +201,7 @@ func (c *Conn) write_v2(prepareSQL string, rows model.Rows, idxBegin, idxEnd int
 	if errExec != nil {
 		_ = batch.Abort()
 		numBad = int(bmBad.GetCardinality())
-		util.Logger.Warn(fmt.Sprintf("writeRows skipped %d rows of %d due to invalid content", numBad, len(rows)), zap.Error(errExec))
+		util.Logger.Warn(fmt.Sprintf("writeRows skipped %d rows of %d due to invalid content", numBad, len(rows)), zap.Error(errExec), zap.String("prepareSQL", prepareSQL))
 		// write rows again, skip bad ones
 		if batch, err = c.c.PrepareBatch(c.ctx, prepareSQL); err != nil {
 			err = errors.Wrapf(err, "pool.Conn.PrepareBatch %s", prepareSQL)

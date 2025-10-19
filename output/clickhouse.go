@@ -20,6 +20,7 @@ import (
 	"expvar"
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -59,23 +60,25 @@ WHERE
 	wrSeriesQuota int = 16384
 
 	SeriesQuotas sync.Map
+
+	distEngineReg = regexp.MustCompile(`(Distributed\s*\(\s*'[^']*',\s*')[^']*(')`)
 )
 
 // ClickHouse is an output service consumers from kafka messages
 type ClickHouse struct {
-	Dims           []*model.ColumnWithType
-	NumDims        int
-	IdxSerID       int
-	NameKey        string
-	PrepareSQL     string
-	PromSerSQL     string
-	PrepareSQLTmpl string
-	PromSerSQLTmpl string
-	DimSerID       string
-	DimMgmtID      string
-	SortingKeys    []*model.ColumnWithType
-	TableName      string
-	DbName         string
+	Dims       []*model.ColumnWithType
+	NumDims    int
+	IdxSerID   int
+	NameKey    string
+	PrepareSQL string
+	PromSerSQL string
+	// PrepareSQLTmpl string
+	// PromSerSQLTmpl string
+	DimSerID    string
+	DimMgmtID   string
+	SortingKeys []*model.ColumnWithType
+	TableName   string
+	DbName      string
 
 	cfg            *config.Config
 	taskCfg        *config.TaskConfig
@@ -119,7 +122,8 @@ func NewClickHouse(cfg *config.Config, taskCfg *config.TaskConfig) *ClickHouse {
 
 // Init the clickhouse intance
 func (c *ClickHouse) Init() (err error) {
-	return c.initSchema()
+	c.PrepareSQL, c.PromSerSQL, err = c.initSchema(c.cfg.Clickhouse.DB)
+	return err
 }
 
 // Drain drains flying batchs
@@ -302,7 +306,7 @@ func (c *ClickHouse) getSeriesDims(dims []*model.ColumnWithType, conn *pool.Conn
 	}
 }
 
-func (c *ClickHouse) initSeriesSchema(conn *pool.Conn) (err error) {
+func (c *ClickHouse) initSeriesSchema(conn *pool.Conn, database string) (promSerSQL string, err error) {
 	if !c.taskCfg.PrometheusSchema {
 		c.IdxSerID = -1
 		return
@@ -314,9 +318,9 @@ func (c *ClickHouse) initSeriesSchema(conn *pool.Conn) (err error) {
 	}
 
 	var seriesDims []*model.ColumnWithType
-	if seriesDims, err = getDims(c.DbName, c.seriesTbl, nil, c.cfg.Clickhouse.DbKey, c.taskCfg.Parser, conn); err != nil {
+	if seriesDims, err = getDims(database, c.seriesTbl, nil, c.cfg.Clickhouse.DbKey, c.taskCfg.Parser, conn); err != nil {
 		if errors.Is(err, ErrTblNotExist) {
-			err = errors.Wrapf(err, "Please create series table for %s.%s", c.DbName, c.TableName)
+			err = errors.Wrapf(err, "Please create series table for %s.%s", database, c.TableName)
 			return
 		}
 		return
@@ -337,7 +341,7 @@ func (c *ClickHouse) initSeriesSchema(conn *pool.Conn) (err error) {
 		}
 	}
 	if dimSerID == nil {
-		err = errors.Newf("Metric table %s.%s shall have column `%s Int64`.", c.DbName, c.TableName, c.DimSerID)
+		err = errors.Newf("Metric table %s.%s shall have column `%s Int64`.", database, c.TableName, c.DimSerID)
 		return
 	}
 	c.IdxSerID = len(c.Dims)
@@ -386,36 +390,26 @@ func (c *ClickHouse) initSeriesSchema(conn *pool.Conn) (err error) {
 			params[i] = "?"
 		}
 
-		c.PromSerSQL = "INSERT INTO " + c.cfg.Clickhouse.DB + "." + c.TableName + " (" + strings.Join(serDimsQuoted, ",") + ") " +
+		promSerSQL = "INSERT INTO " + database + "." + c.TableName + " (" + strings.Join(serDimsQuoted, ",") + ") " +
 			"VALUES (" + strings.Join(params, ",") + ")"
-		if c.cfg.Clickhouse.DbKey != "" {
-			c.PromSerSQLTmpl = "INSERT INTO " + c.cfg.Clickhouse.DbKey + "." + c.TableName + " (" + strings.Join(serDimsQuoted, ",") + ") " +
-				"VALUES (" + strings.Join(params, ",") + ")"
-		}
 	} else {
 		serDimsQuoted := make([]string, len(seriesDims))
 		for i, serDim := range seriesDims {
 			serDimsQuoted[i] = fmt.Sprintf("`%s`", serDim.Name)
 		}
-		c.PromSerSQL = fmt.Sprintf("INSERT INTO `%s`.`%s` (%s)",
-			c.DbName,
+		promSerSQL = fmt.Sprintf("INSERT INTO `%s`.`%s` (%s)",
+			database,
 			c.seriesTbl,
 			strings.Join(serDimsQuoted, ","))
-		if c.cfg.Clickhouse.DbKey != "" {
-			c.PromSerSQLTmpl = fmt.Sprintf("INSERT INTO `%s`.`%s` (%s)",
-				c.cfg.Clickhouse.DbKey,
-				c.seriesTbl,
-				strings.Join(serDimsQuoted, ","))
-		}
 	}
-	util.Logger.Info(fmt.Sprintf("promSer sql=> %s", c.PromSerSQL), zap.String("task", c.taskCfg.Name))
+	util.Logger.Info(fmt.Sprintf("promSer sql=> %s", promSerSQL), zap.String("task", c.taskCfg.Name))
 
 	// Check distributed series table
 	if chCfg := &c.cfg.Clickhouse; chCfg.Cluster != "" {
 		withDistTable := false
-		info, e := c.getDistTbls(c.seriesTbl, chCfg.Cluster)
+		info, e := c.getDistTbls(database, c.seriesTbl, chCfg.Cluster)
 		if e != nil {
-			return e
+			return promSerSQL, e
 		}
 		c.distSeriesTbls = make([]string, 0)
 		for _, i := range info {
@@ -430,7 +424,7 @@ func (c *ClickHouse) initSeriesSchema(conn *pool.Conn) (err error) {
 		}
 	}
 
-	sq, _ := SeriesQuotas.LoadOrStore(c.GetSeriesQuotaKey(c.DbName),
+	sq, _ := SeriesQuotas.LoadOrStore(c.GetSeriesQuotaKey(database),
 		&model.SeriesQuota{
 			NextResetQuota: time.Now().Add(10 * time.Second),
 			Birth:          time.Now(),
@@ -440,7 +434,7 @@ func (c *ClickHouse) initSeriesSchema(conn *pool.Conn) (err error) {
 	return
 }
 
-func (c *ClickHouse) initSchema() (err error) {
+func (c *ClickHouse) initSchema(database string) (prepareSql, promSerSQL string, err error) {
 	if idx := strings.Index(c.taskCfg.TableName, "."); idx > 0 {
 		c.TableName = c.taskCfg.TableName[idx+1:]
 		c.DbName = c.taskCfg.TableName[0:idx]
@@ -458,9 +452,9 @@ func (c *ClickHouse) initSchema() (err error) {
 	// Check distributed metric table
 	if chCfg := &c.cfg.Clickhouse; chCfg.Cluster != "" {
 		withDistTable := false
-		info, e := c.getDistTbls(c.TableName, chCfg.Cluster)
+		info, e := c.getDistTbls(database, c.TableName, chCfg.Cluster)
 		if e != nil {
-			return e
+			return prepareSql, promSerSQL, e
 		}
 		c.distMetricTbls = make([]string, 0)
 		for _, i := range info {
@@ -474,11 +468,11 @@ func (c *ClickHouse) initSchema() (err error) {
 			return
 		}
 	}
-	if err = c.ensureShardingkey(conn, c.TableName, c.taskCfg.Parser); err != nil {
+	if err = c.ensureShardingkey(conn, database, c.TableName, c.taskCfg.Parser); err != nil {
 		return
 	}
 	if c.taskCfg.AutoSchema {
-		if c.Dims, err = getDims(c.DbName, c.TableName, c.taskCfg.ExcludeColumns, c.cfg.Clickhouse.DbKey, c.taskCfg.Parser, conn); err != nil {
+		if c.Dims, err = getDims(database, c.TableName, c.taskCfg.ExcludeColumns, c.cfg.Clickhouse.DbKey, c.taskCfg.Parser, conn); err != nil {
 			return
 		}
 	} else {
@@ -491,8 +485,7 @@ func (c *ClickHouse) initSchema() (err error) {
 			})
 		}
 	}
-
-	if err = c.initSeriesSchema(conn); err != nil {
+	if promSerSQL, err = c.initSeriesSchema(conn, database); err != nil {
 		return
 	}
 	// Generate SQL for INSERT
@@ -510,12 +503,8 @@ func (c *ClickHouse) initSchema() (err error) {
 		for i := range params {
 			params[i] = "?"
 		}
-		c.PrepareSQL = "INSERT INTO " + c.cfg.Clickhouse.DB + "." + c.TableName + " (" + strings.Join(quotedDms, ",") + ") " +
+		prepareSql = "INSERT INTO " + c.cfg.Clickhouse.DB + "." + c.TableName + " (" + strings.Join(quotedDms, ",") + ") " +
 			"VALUES (" + strings.Join(params, ",") + ")"
-		if c.cfg.Clickhouse.DbKey != "" {
-			c.PrepareSQLTmpl = "INSERT INTO " + c.cfg.Clickhouse.DbKey + "." + c.TableName + " (" + strings.Join(quotedDms, ",") + ") " +
-				"VALUES (" + strings.Join(params, ",") + ")"
-		}
 	} else {
 		c.NumDims = len(c.Dims)
 		numDims := c.NumDims
@@ -526,39 +515,14 @@ func (c *ClickHouse) initSchema() (err error) {
 		for i := 0; i < numDims; i++ {
 			quotedDms[i] = fmt.Sprintf("`%s`", c.Dims[i].Name)
 		}
-		c.PrepareSQL = fmt.Sprintf("INSERT INTO `%s`.`%s` (%s)",
-			c.DbName,
+		prepareSql = fmt.Sprintf("INSERT INTO `%s`.`%s` (%s)",
+			database,
 			c.TableName,
 			strings.Join(quotedDms, ","))
-		if c.cfg.Clickhouse.DbKey != "" {
-			c.PrepareSQLTmpl = fmt.Sprintf("INSERT INTO `%s`.`%s` (%s)",
-				c.cfg.Clickhouse.DbKey,
-				c.TableName,
-				strings.Join(quotedDms, ","))
-		}
 	}
-	util.Logger.Info(fmt.Sprintf("Prepare sql=> %s", c.PrepareSQL), zap.String("task", c.taskCfg.Name))
+	util.Logger.Info(fmt.Sprintf("Prepare sql=> %s", prepareSql), zap.String("task", c.taskCfg.Name))
 
-	// // Check distributed metric table
-	// if chCfg := &c.cfg.Clickhouse; chCfg.Cluster != "" {
-	// 	withDistTable := false
-	// 	info, e := c.getDistTbls(c.TableName, chCfg.Cluster)
-	// 	if e != nil {
-	// 		return e
-	// 	}
-	// 	c.distMetricTbls = make([]string, 0)
-	// 	for _, i := range info {
-	// 		c.distMetricTbls = append(c.distMetricTbls, i.name)
-	// 		if i.cluster == c.cfg.Clickhouse.Cluster {
-	// 			withDistTable = true
-	// 		}
-	// 	}
-	// 	if !withDistTable {
-	// 		err = errors.Newf("Please create distributed table for %s in cluster '%s'.", c.TableName, c.cfg.Clickhouse.Cluster)
-	// 		return
-	// 	}
-	// }
-	return nil
+	return
 }
 
 func (c *ClickHouse) ChangeSchema(dbkey string, newKeys *sync.Map) (err error) {
@@ -672,7 +636,7 @@ func (c *ClickHouse) ChangeSchema(dbkey string, newKeys *sync.Map) (err error) {
 	return
 }
 
-func (c *ClickHouse) getDistTbls(table, clusterName string) (distTbls []DistTblInfo, err error) {
+func (c *ClickHouse) getDistTbls(database, table, clusterName string) (distTbls []DistTblInfo, err error) {
 	taskCfg := c.taskCfg
 	sc := pool.GetShardConn(0)
 	var conn *pool.Conn
@@ -681,7 +645,7 @@ func (c *ClickHouse) getDistTbls(table, clusterName string) (distTbls []DistTblI
 	}
 	query := fmt.Sprintf(`SELECT name, (extractAllGroups(engine_full, '(Distributed\\(\')(.*)\',\\s+\'(.*)\',\\s+\'(.*)\'(.*)')[1])[2] AS cluster
 	 FROM system.tables WHERE engine='Distributed' AND database='%s' AND match(engine_full, 'Distributed\(\'.*\', \'%s\', \'%s\'.*\)')`,
-		c.DbName, c.DbName, table)
+		database, database, table)
 	util.Logger.Info(fmt.Sprintf("executing sql=> %s", query), zap.String("task", taskCfg.Name))
 	var rows *pool.Rows
 	if rows, err = conn.Query(query); err != nil {
@@ -738,7 +702,7 @@ func (c *ClickHouse) SetSeriesQuota(sq *model.SeriesQuota) {
 	c.seriesQuota = sq
 }
 
-func (c *ClickHouse) ensureShardingkey(conn *pool.Conn, tblName string, parser string) (err error) {
+func (c *ClickHouse) ensureShardingkey(conn *pool.Conn, database, tblName string, parser string) (err error) {
 	if c.taskCfg.ShardingKey != "" {
 		return
 	}
@@ -747,7 +711,7 @@ func (c *ClickHouse) ensureShardingkey(conn *pool.Conn, tblName string, parser s
 	}
 	// get engine
 	query := fmt.Sprintf("SELECT engine FROM system.tables WHERE database = '%s' AND table = '%s'",
-		c.DbName, tblName)
+		database, tblName)
 	util.Logger.Info(fmt.Sprintf("executing sql=> %s", query), zap.String("task", c.taskCfg.Name))
 	var engine string
 	err = conn.QueryRow(query).Scan(&engine)
@@ -757,7 +721,7 @@ func (c *ClickHouse) ensureShardingkey(conn *pool.Conn, tblName string, parser s
 	//get sortingkey
 	if strings.Contains(engine, "Replacing") {
 		query = fmt.Sprintf("SELECT name, type FROM system.columns WHERE (database = '%s') AND (table = '%s') AND (is_in_sorting_key = 1)",
-			c.DbName, tblName)
+			database, tblName)
 		util.Logger.Info(fmt.Sprintf("executing sql=> %s", query), zap.String("task", c.taskCfg.Name))
 		rows, _ := conn.Query(query)
 		sortingKeys := make([]string, 0)
@@ -776,7 +740,7 @@ func (c *ClickHouse) ensureShardingkey(conn *pool.Conn, tblName string, parser s
 		}
 		rows.Close()
 		util.Logger.Info(fmt.Sprintf("sortingKeys: %v", sortingKeys),
-			zap.String("db", c.DbName),
+			zap.String("db", database),
 			zap.String("table", tblName),
 			zap.String("task", c.taskCfg.Name))
 		var version string
@@ -788,7 +752,7 @@ func (c *ClickHouse) ensureShardingkey(conn *pool.Conn, tblName string, parser s
 			onCluster = fmt.Sprintf("ON CLUSTER `%s`", c.cfg.Clickhouse.Cluster)
 		}
 		query = fmt.Sprintf("ALTER TABLE `%s`.`%s` %s ADD COLUMN IF NOT EXISTS `__shardingkey` Int64",
-			c.DbName, tblName, onCluster)
+			database, tblName, onCluster)
 		if util.CompareClickHouseVersion(version, "23.3") >= 0 {
 			query += " SETTINGS alter_sync = 0"
 		}
@@ -797,15 +761,9 @@ func (c *ClickHouse) ensureShardingkey(conn *pool.Conn, tblName string, parser s
 			return
 		}
 
-		// var distTables []DistTblInfo
-		// distTables, err = c.getDistTbls(tblName, c.cfg.Clickhouse.Cluster)
-		// if err != nil {
-		// 	return
-		// }
-
 		for _, distTbl := range c.distMetricTbls {
 			query := fmt.Sprintf("ALTER TABLE `%s`.`%s` %s ADD COLUMN IF NOT EXISTS `__shardingkey` Int64",
-				c.DbName, distTbl, onCluster)
+				database, distTbl, onCluster)
 			util.Logger.Info(fmt.Sprintf("executing sql=> %s", query), zap.String("task", c.taskCfg.Name))
 			if err = conn.Exec(query); err != nil {
 				return
@@ -815,66 +773,90 @@ func (c *ClickHouse) ensureShardingkey(conn *pool.Conn, tblName string, parser s
 	return
 }
 
-func (c *ClickHouse) EnsureSchema(database string) error {
+func (c *ClickHouse) EnsureSchema(database string) (prepareSQL string, promSerSQL string, err error) {
+	prepareSQL, promSerSQL = c.PrepareSQL, c.PromSerSQL
 	if c.cfg.Clickhouse.DbKey == "" {
-		return nil
+		return
 	}
-	var err error
 	sc := pool.GetShardConn(0)
-	query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s ON CLUSTER `%s`", database, c.cfg.Clickhouse.Cluster)
-	util.Logger.Info(fmt.Sprintf("executing sql=> %s", query), zap.String("task", c.taskCfg.Name))
 	var conn *pool.Conn
 	if conn, _, err = sc.NextGoodReplica(c.cfg.Clickhouse.Ctx, 0); err != nil {
-		util.Logger.Error(fmt.Sprintf("executing sql=> %s", query), zap.String("task", c.taskCfg.Name), zap.Error(err))
-		return err
+		util.Logger.Error("no connection in clickhouse", zap.String("task", c.taskCfg.Name), zap.Error(err))
+		return
 	}
-	if err = conn.Exec(query); err != nil {
-		util.Logger.Error(fmt.Sprintf("executing sql=> %s", query), zap.String("task", c.taskCfg.Name), zap.Error(err))
-		return err
+	// check if table exists
+	var tableExists bool
+	query := fmt.Sprintf("SELECT count() FROM system.tables WHERE (database = '%s') AND (table = '%s')",
+		database, c.TableName)
+	util.Logger.Info(fmt.Sprintf("executing sql=> %s", query), zap.String("task", c.taskCfg.Name))
+	var count uint64
+	if err = conn.QueryRow(query).Scan(&count); err == nil {
+		if count > 0 {
+			tableExists = true
+		} else {
+			util.Logger.Info("table not exists, creating tables", zap.Uint64("count", count))
+		}
+	} else {
+		util.Logger.Error("executing sql=> %s", zap.String("task", c.taskCfg.Name), zap.Error(err))
 	}
 
-	var createSqls []string
-	var tables []string
-	tables = append(tables, c.TableName)
-	if c.seriesTbl != "" {
-		tables = append(tables, c.seriesTbl)
-	}
-	if len(c.distMetricTbls) > 0 {
-		tables = append(tables, c.distMetricTbls...)
-	}
-	if len(c.distSeriesTbls) > 0 {
-		tables = append(tables, c.distSeriesTbls...)
-	}
-	util.Logger.Info("tables to create", zap.Int("count", len(tables)), zap.Any("tables", tables))
-	for _, tbl := range tables {
-		createSql, err := genCreateSql(conn, c.DbName, tbl, database, c.cfg.Clickhouse.Cluster)
-		if err != nil {
-			util.Logger.Error("failed to gen create sql", zap.String("task", c.taskCfg.Name), zap.Error(err))
-			return err
+	if !tableExists {
+		util.Logger.Info("table not exists, creating tables")
+		query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s ON CLUSTER `%s`", database, c.cfg.Clickhouse.Cluster)
+		util.Logger.Info(fmt.Sprintf("executing sql=> %s", query), zap.String("task", c.taskCfg.Name))
+		if err = conn.Exec(query); err != nil {
+			util.Logger.Error(fmt.Sprintf("executing sql=> %s", query), zap.String("task", c.taskCfg.Name), zap.Error(err))
+			return
 		}
-		createSqls = append(createSqls, createSql)
-	}
-	for _, createSql := range createSqls {
-		util.Logger.Info(fmt.Sprintf("executing sql=> %s", createSql), zap.String("task", c.taskCfg.Name))
-		if err = conn.Exec(createSql); err != nil {
-			util.Logger.Error(fmt.Sprintf("executing sql=> %s", createSql), zap.String("task", c.taskCfg.Name), zap.Error(err))
+		var createSqls []string
+		var tables []string
+		tables = append(tables, c.TableName)
+		if c.seriesTbl != "" {
+			tables = append(tables, c.seriesTbl)
 		}
-	}
 
-	if c.taskCfg.PrometheusSchema {
-		sq, _ := SeriesQuotas.LoadOrStore(c.GetSeriesQuotaKey(database),
-			&model.SeriesQuota{
-				NextResetQuota: time.Now().Add(10 * time.Second),
-				Birth:          time.Now(),
-			})
-		seriesQuota := sq.(*model.SeriesQuota)
-		if seriesQuota.BmSeries == nil {
-			seriesQuota.BmSeries = make(map[int64]int64)
+		if len(c.distMetricTbls) > 0 {
+			tables = append(tables, c.distMetricTbls...)
 		}
-		c.seriesQuota = seriesQuota
-	}
+		if len(c.distSeriesTbls) > 0 {
+			tables = append(tables, c.distSeriesTbls...)
+		}
+		util.Logger.Info("tables to create", zap.Int("count", len(tables)), zap.Any("tables", tables))
+		for _, tbl := range tables {
+			var createSql string
+			createSql, err = genCreateSql(conn, c.DbName, tbl, database, c.cfg.Clickhouse.Cluster)
+			if err != nil {
+				util.Logger.Error("failed to gen create sql", zap.String("task", c.taskCfg.Name), zap.Error(err))
+				return
+			}
+			createSqls = append(createSqls, createSql)
+		}
+		for _, createSql := range createSqls {
+			util.Logger.Info(fmt.Sprintf("executing sql=> %s", createSql), zap.String("task", c.taskCfg.Name))
+			if err = conn.Exec(createSql); err != nil {
+				util.Logger.Error(fmt.Sprintf("executing sql=> %s", createSql), zap.String("task", c.taskCfg.Name), zap.Error(err))
+			}
+		}
 
-	return nil
+		if c.taskCfg.PrometheusSchema {
+			sq, _ := SeriesQuotas.LoadOrStore(c.GetSeriesQuotaKey(database),
+				&model.SeriesQuota{
+					NextResetQuota: time.Now().Add(10 * time.Second),
+					Birth:          time.Now(),
+				})
+			seriesQuota := sq.(*model.SeriesQuota)
+			if seriesQuota.BmSeries == nil {
+				seriesQuota.BmSeries = make(map[int64]int64)
+			}
+			c.seriesQuota = seriesQuota
+		}
+	}
+	prepareSQL, promSerSQL, err = c.initSchema(database)
+	if err != nil {
+		util.Logger.Error("failed to init schema", zap.String("task", c.taskCfg.Name), zap.String("database", database), zap.Error(err))
+		return
+	}
+	return
 }
 
 func genCreateSql(conn *pool.Conn, database, table, target, cluster string) (string, error) {
@@ -887,5 +869,11 @@ WHERE (database = '%s') AND (table = '%s')`,
 	if err := conn.QueryRow(query).Scan(&createSql); err != nil {
 		return "", err
 	}
+	if strings.Contains(createSql, "Distributed") {
+		createSql = strings.ReplaceAll(createSql,
+			fmt.Sprintf("Distributed('%s', '%s'", cluster, database),
+			fmt.Sprintf("Distributed('%s', '%s'", cluster, target))
+	}
+	createSql = distEngineReg.ReplaceAllString(createSql, fmt.Sprintf("${1}%s${2}", target))
 	return createSql, nil
 }

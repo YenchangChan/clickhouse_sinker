@@ -194,7 +194,7 @@ func (sh *Sharder) Flush(c context.Context, wg *sync.WaitGroup, state model.DbSt
 			}
 		}
 		if msgCnt > 0 {
-			util.Logger.Info(fmt.Sprintf("created a batch group for task %v with %d shards, total messages %d", sh.service.taskCfg.Name, len(sh.msgBuf), msgCnt),
+			util.Logger.Info(fmt.Sprintf("created a batch group for task %v with %d shards, total messages %d", sh.service.taskCfg.Name, len(sh.msgBuf[state.Name]), msgCnt),
 				zap.String("group", batchId), zap.String("dbkey", state.Name))
 			statistics.ShardMsgs.WithLabelValues(taskCfg.Name, state.Name).Sub(float64(msgCnt))
 		}

@@ -87,6 +87,10 @@ func (c *Consumer) SetDbMap(name string, state *model.DbState) {
 	c.dbMap.Store(name, state)
 }
 
+func (c *Consumer) DelDbMap(name string) {
+	c.dbMap.Delete(name)
+}
+
 func (c *Consumer) addTask(tsk *Service) {
 	c.tasks.Store(tsk.taskCfg.Name, tsk)
 }
@@ -194,14 +198,6 @@ func (c *Consumer) processFetch() {
 			c.tasks.Range(func(key, value any) bool {
 				// flush to shard, ck
 				task := value.(*Service)
-				if state.NewKey {
-					util.Logger.Info("new dbkey found, ensure schema",
-						zap.String("task", task.taskCfg.Name),
-						zap.String("dbkey", state.Name))
-					task.sharder.service.clickhouse.EnsureSchema(state.Name)
-					state.NewKey = false
-					c.SetDbMap(state.Name, state)
-				}
 				task.sharder.Flush(c.ctx, &wg, *state)
 				return true
 			})

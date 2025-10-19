@@ -120,15 +120,22 @@ func NewTaskService(cfg *config.Config, taskCfg *config.TaskConfig, c *Consumer)
 
 func (service *Service) copyColKeys(dbkey string) {
 	colKey := &ColKeys{}
-	util.Logger.Info("debug111 service.colKeys", zap.String("dbkey", dbkey))
-	colKey.cntNewKeys = atomic.LoadInt32(&service.cntNewKeys)
-	service.knownKeys.Range(func(key, value interface{}) bool {
-		colKey.knownKeys.Store(key, nil)
-		return true
-	})
 	if service.colKeys == nil {
 		service.colKeys = make(map[string]*ColKeys)
 	}
+	for _, dims := range service.clickhouse.Dims {
+		if _, ok := colKey.knownKeys.Load(dims.SourceName); !ok {
+			colKey.knownKeys.Store(dims.SourceName, nil)
+		}
+	}
+	for _, dims := range service.taskCfg.ExcludeColumns {
+		if _, ok := colKey.knownKeys.Load(dims); !ok {
+			colKey.knownKeys.Store(dims, nil)
+		}
+	}
+	colKey.knownKeys.Store("", nil) // column name shall not be empty string
+	colKey.newKeys = sync.Map{}
+	atomic.StoreInt32(&colKey.cntNewKeys, 0)
 	service.colKeys[dbkey] = colKey
 }
 
@@ -189,6 +196,7 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 	var state *model.DbState
 	var foundNewKeys bool
 	var metric model.Metric
+	var colKey *ColKeys
 
 	p, err := service.pp.Get()
 	if err != nil {
@@ -212,14 +220,19 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 		}
 		if state.NewKey {
 			service.dynamicSchemaLock.Lock()
-			service.clickhouse.EnsureSchema(state.Name)
+			state.PrepareSQL, state.PromSerSQL, err = service.clickhouse.EnsureSchema(state.Name)
+			if err != nil {
+				util.Logger.Error("failed to ensure schema", zap.String("task", taskCfg.Name), zap.Error(err))
+			}
 			service.dynamicSchemaLock.Unlock()
+			state.NewKey = false
+			service.consumer.SetDbMap(state.Name, state)
+			service.copyColKeys(state.Name)
 		}
 		if taskCfg.DynamicSchema.Enable {
 			service.dynamicSchemaLock.Lock()
-			colKey := service.colKeys[state.Name]
+			colKey = service.colKeys[state.Name]
 			if colKey == nil {
-				util.Logger.Info("debug111 getNewKeys", zap.String("dbkey", state.Name))
 				service.copyColKeys(state.Name)
 				colKey = service.colKeys[state.Name]
 			}
@@ -231,7 +244,7 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 	service.pp.Put(p)
 
 	if foundNewKeys {
-		cntNewKeys := atomic.AddInt32(&service.cntNewKeys, 1)
+		cntNewKeys := atomic.AddInt32(&colKey.cntNewKeys, 1)
 		if cntNewKeys == 1 {
 			// the first message which contains new keys triggers the following:
 			// 1) restart the consumer group
@@ -244,16 +257,17 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 				go service.consumer.restart()
 			}
 			flushFn()
-			if err = service.clickhouse.ChangeSchema(state.Name, &service.newKeys); err != nil {
+			if err = service.clickhouse.ChangeSchema(state.Name, &colKey.newKeys); err != nil {
 				util.Logger.Fatal("clickhouse.ChangeSchema failed", zap.String("task", taskCfg.Name), zap.Error(err))
 			}
+			service.consumer.DelDbMap(state.Name)
 			cloneTask(service, nil)
 
 			return fmt.Errorf("consumer restart required due to new key")
 		}
 	}
 
-	if atomic.LoadInt32(&service.cntNewKeys) == 0 && service.consumer.state.Load() == util.StateRunning {
+	if atomic.LoadInt32(&colKey.cntNewKeys) == 0 && service.consumer.state.Load() == util.StateRunning {
 		msgRow := model.MsgRow{Msg: msg, Row: row}
 		if service.sharder.policy != nil {
 			if msgRow.Shard, err = service.sharder.Calc(msgRow.Row, msg.Offset); err != nil {
@@ -305,10 +319,8 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 					if state, ok = service.consumer.GetDbMap(key); !ok {
 						//util.Logger.Info("new dbkey found, creating db", zap.String("dbkey", key), zap.String("task", service.taskCfg.Name))
 						state = &model.DbState{
-							Name:       key,
-							PrepareSQL: util.Replace(service.clickhouse.PrepareSQLTmpl, dim.SourceName, val),
-							PromSerSQL: util.Replace(service.clickhouse.PromSerSQLTmpl, dim.SourceName, val),
-							NewKey:     true,
+							Name:   key,
+							NewKey: true,
 						}
 					}
 				}
@@ -379,9 +391,8 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 						// util.Logger.Info("new dbkey found, creating db", zap.String("dbkey", key), zap.String("task", service.taskCfg.Name))
 						// service.clickhouse.EnsureSchema(key)
 						state = &model.DbState{
-							Name:       key,
-							PrepareSQL: util.Replace(service.clickhouse.PrepareSQLTmpl, dim.SourceName, val),
-							NewKey:     true,
+							Name:   key,
+							NewKey: true,
 						}
 					}
 				}
