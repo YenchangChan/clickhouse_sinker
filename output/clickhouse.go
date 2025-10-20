@@ -499,7 +499,7 @@ func (c *ClickHouse) initSchema(database string) (prepareSql, promSerSQL string,
 		for i := 0; i < numDims; i++ {
 			quotedDms[i] = fmt.Sprintf("`%s`", c.Dims[i].Name)
 		}
-		var params = make([]string, c.NumDims)
+		var params = make([]string, numDims)
 		for i := range params {
 			params[i] = "?"
 		}
