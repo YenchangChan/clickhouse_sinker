@@ -15,6 +15,7 @@ require (
 	github.com/drhodes/golorem v0.0.0-20220328165741-da82e5b29246
 	github.com/gin-gonic/gin v1.7.4
 	github.com/google/gops v0.3.28
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/hjson/hjson-go/v4 v4.4.0
 	github.com/jcmturner/gokrb5/v8 v8.4.4
 	github.com/jinzhu/copier v0.4.0
