@@ -22,6 +22,9 @@ type DbState struct {
 	PromSerSQL string
 	BufLength  int64
 	NewKey     bool
+	Dims       []*ColumnWithType
+	NumDims    int
+	IdxSerID   int
 }
 
 type Row []interface{}

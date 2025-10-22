@@ -195,7 +195,7 @@ func (c *ClickHouse) AllowWriteSeries(sid, mid int64) (allowed bool) {
 	return
 }
 
-func (c *ClickHouse) writeSeries(promSerSQL string, rows model.Rows, conn *pool.Conn) (err error) {
+func (c *ClickHouse) writeSeries(promSerSQL string, idxSerID int, rows model.Rows, conn *pool.Conn) (err error) {
 	var seriesRows model.Rows
 	for _, row := range rows {
 		if len(*row) != c.NumDims {
@@ -206,16 +206,19 @@ func (c *ClickHouse) writeSeries(promSerSQL string, rows model.Rows, conn *pool.
 	if len(seriesRows) != 0 {
 		begin := time.Now()
 		var numBad int
-		if numBad, err = writeRows(promSerSQL, seriesRows, c.IdxSerID, c.NumDims, conn); err != nil {
+		if numBad, err = writeRows(promSerSQL, seriesRows, idxSerID, c.NumDims, conn); err != nil {
 			return
 		}
 		// update c.bmSeries **after** writing series
 		c.seriesQuota.Lock()
 		for _, row := range seriesRows {
-			sid := (*row)[c.IdxSerID].(int64)
-			mid := (*row)[c.IdxSerID+1].(int64)
+			sid := (*row)[idxSerID].(int64)
+			mid := (*row)[idxSerID+1].(int64)
 			if _, loaded := c.seriesQuota.BmSeries[sid]; loaded {
 				c.seriesQuota.WrSeries--
+			}
+			if c.seriesQuota.BmSeries == nil {
+				c.seriesQuota.BmSeries = make(map[int64]int64)
 			}
 			c.seriesQuota.BmSeries[sid] = mid
 		}
@@ -245,8 +248,8 @@ func (c *ClickHouse) write(batch *model.Batch, sc *pool.ShardConn, dbVer *int, s
 	//row[c.IdxSerID:] is for series table
 	numDims := c.NumDims
 	if c.taskCfg.PrometheusSchema {
-		numDims = c.IdxSerID + 1
-		if err = c.writeSeries(state.PromSerSQL, *batch.Rows, conn); err != nil {
+		numDims = state.IdxSerID + 1
+		if err = c.writeSeries(state.PromSerSQL, state.IdxSerID, *batch.Rows, conn); err != nil {
 			return
 		}
 	}

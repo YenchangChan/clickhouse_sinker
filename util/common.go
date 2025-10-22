@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -41,6 +42,8 @@ var (
 	logPaths     []string
 
 	startTime time.Time
+
+	re = regexp.MustCompile(`\$\{(.*?)\}`)
 )
 
 func init() {
@@ -356,6 +359,15 @@ func CompareClickHouseVersion(v1, v2 string) int {
 
 func Key(s string) string {
 	return "${" + s + "}"
+}
+
+func ExtractField(str string) string {
+	vars := re.FindAllStringSubmatch(str, -1)
+	if len(vars) == 0 {
+		return ""
+	} else {
+		return vars[0][1]
+	}
 }
 
 func Value(val interface{}) string {

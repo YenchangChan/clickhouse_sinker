@@ -149,4 +149,6 @@ func TestReplace(t *testing.T) {
 	str = Replace(str, "name", "zhangsan")
 	str = Replace(str, "password", "123456")
 	fmt.Println(str)
+
+	fmt.Println(ExtractField("upcms_${uin}"))
 }

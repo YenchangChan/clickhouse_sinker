@@ -17,7 +17,9 @@ func writeRows(prepareSQL string, rows model.Rows, idxBegin, idxEnd int, conn *p
 func getDims(database, table string, excludedColumns []string, dbKey, parser string, conn *pool.Conn) (dims []*model.ColumnWithType, err error) {
 	var rs *pool.Rows
 	notNullable := make(map[string]bool)
-	if rs, err = conn.Query(fmt.Sprintf(referedSQLTemplate, database, table)); err != nil {
+	query := fmt.Sprintf(referedSQLTemplate, database, table)
+	util.Logger.Info(fmt.Sprintf("executing sql=> %s", query))
+	if rs, err = conn.Query(query); err != nil {
 		err = errors.Wrapf(err, "")
 		return
 	}
@@ -33,7 +35,9 @@ func getDims(database, table string, excludedColumns []string, dbKey, parser str
 	}
 
 	rs.Close()
-	if rs, err = conn.Query(fmt.Sprintf(selectSQLTemplate, database, table)); err != nil {
+	query = fmt.Sprintf(selectSQLTemplate, database, table)
+	util.Logger.Info(fmt.Sprintf("executing sql=> %s", query))
+	if rs, err = conn.Query(query); err != nil {
 		err = errors.Wrapf(err, "")
 		return
 	}

@@ -46,6 +46,7 @@ type ColKeys struct {
 
 // TaskService holds the configuration for each task
 type Service struct {
+	cfg        *config.Config
 	clickhouse *output.ClickHouse
 	pp         *parser.Pool
 	taskCfg    *config.TaskConfig
@@ -74,6 +75,7 @@ type Service struct {
 // cloneTask create a new task by stealing members from s instead of creating a new one
 func cloneTask(s *Service, newGroup *Consumer) (service *Service) {
 	service = &Service{
+		cfg:        s.cfg,
 		clickhouse: s.clickhouse,
 		pp:         s.pp,
 		taskCfg:    s.taskCfg,
@@ -100,6 +102,7 @@ func NewTaskService(cfg *config.Config, taskCfg *config.TaskConfig, c *Consumer)
 		util.Logger.Fatal("failed to create task", zap.String("group", c.grpConfig.Name), zap.String("task", taskCfg.Name), zap.Error(err))
 	}
 	service = &Service{
+		cfg:        cfg,
 		clickhouse: ck,
 		pp:         pp,
 		taskCfg:    taskCfg,
@@ -224,6 +227,9 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 			if err != nil {
 				util.Logger.Error("failed to ensure schema", zap.String("task", taskCfg.Name), zap.Error(err))
 			}
+			state.NumDims = service.clickhouse.NumDims
+			state.Dims = service.clickhouse.Dims
+			state.IdxSerID = service.clickhouse.IdxSerID
 			service.dynamicSchemaLock.Unlock()
 			state.NewKey = false
 			service.consumer.SetDbMap(state.Name, state)
@@ -282,33 +288,68 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 	return nil
 }
 
-func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage) (*model.DbState, *model.Row) {
+func (service *Service) GetDbKey(metric model.Metric) string {
+	// 它的作用就是从 metric 中提取dbkey，至于基于哪个库的dims模型，关系不大
 	key := service.clickhouse.DbName
-	var state *model.DbState
-	if service.idxSerID >= 0 {
+	service.consumer.dbMap.Range(func(dbKey, state any) bool {
+		s := state.(*model.DbState)
+		for _, dim := range s.Dims {
+			if dim.IsDbKey {
+				val := model.GetValueByType(metric, dim)
+				if val != nil && !util.ZeroValue(val) {
+					key = util.Replace(service.consumer.sinker.curCfg.Clickhouse.DbKey, dim.SourceName, val)
+				}
+				return false
+			}
+		}
+		return true
+	})
+	return key
+}
+
+func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage) (*model.DbState, *model.Row) {
+	key := service.GetDbKey(metric)
+	//var state *model.DbState
+	dims := service.dims
+	numDims := service.numDims
+	idxSerID := service.idxSerID
+	state, ok := service.consumer.GetDbMap(key)
+	if ok {
+		dims = state.Dims
+		numDims = state.NumDims
+		idxSerID = state.IdxSerID
+	} else {
+		state = &model.DbState{
+			Name:     key,
+			NewKey:   true,
+			IdxSerID: idxSerID,
+		}
+	}
+	if idxSerID >= 0 {
 		// If some labels are not Prometheus native, ETL shall calculate and pass "__series_id__" and "__mgmt_id__".
 		val := metric.GetInt64(service.clickhouse.DimSerID, false)
 		seriesID := val.(int64)
 		val = metric.GetInt64(service.clickhouse.DimMgmtID, false)
 		mgmtID := val.(int64)
 		newSeries := service.clickhouse.AllowWriteSeries(seriesID, mgmtID)
-		rowcount := service.idxSerID + 1 // including __series_id__
+		rowcount := idxSerID + 1 // including __series_id__
 		if newSeries {
 			// 啥意思？
-			rowcount += (service.numDims - service.idxSerID + 3)
+			rowcount += (numDims - idxSerID + 3)
 		}
 
 		row := make(model.Row, 0, rowcount)
-		for i := 0; i < service.idxSerID; i++ {
-			row = append(row, model.GetValueByType(metric, service.dims[i]))
+		//util.Logger.Info("metric2Row", zap.Int("idxSerID", idxSerID), zap.String("key", key))
+		for i := 0; i < idxSerID; i++ {
+			row = append(row, model.GetValueByType(metric, dims[i]))
 		}
 		row = append(row, seriesID) // __series_id__
 		if newSeries {
 			var labels []string
 			row = append(row, mgmtID, nil) // __mgmt_id__, labels
 			found := false
-			for i := service.idxSerID + 3; i < service.numDims; i++ {
-				dim := service.dims[i]
+			for i := idxSerID + 3; i < numDims; i++ {
+				dim := dims[i]
 				val := model.GetValueByType(metric, dim)
 				if dim.IsDbKey {
 					if val != nil && !util.ZeroValue(val) {
@@ -347,8 +388,9 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 			}
 			atomic.AddInt64(&state.BufLength, 1)
 			service.consumer.SetDbMap(key, state)
-			row[service.idxSerID+2] = fmt.Sprintf("{%s}", strings.Join(labels, ", "))
+			row[idxSerID+2] = fmt.Sprintf("{%s}", strings.Join(labels, ", "))
 		}
+		//util.Logger.Info("metric2Row2222", zap.String("key", state.Name))
 		return state, &row
 	} else {
 		var shardingVal uint64
@@ -360,9 +402,9 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 
 			shardingVal = xxhash.Sum64String(strings.Join(sortingKeys, "."))
 		}
-		row := make(model.Row, 0, len(service.dims))
+		row := make(model.Row, 0, len(dims))
 		found := false
-		for _, dim := range service.dims {
+		for _, dim := range dims {
 			if strings.HasPrefix(dim.Name, "__kafka") {
 				if strings.HasSuffix(dim.Name, "_topic") {
 					row = append(row, msg.Topic)
