@@ -97,7 +97,7 @@ func (policy *ShardingPolicy) Calc(row *model.Row, offset int64) (shard int, err
 		case time.Time:
 			valu64 = uint64(v.Unix())
 		default:
-			err = errors.Newf("failed to convert %+v to integer", v)
+			err = errors.Newf("failed to convert %+v to integer, colseq: %d", v, policy.colSeq)
 			return
 		}
 		shard = int((valu64 / policy.stripe) % uint64(policy.shards))

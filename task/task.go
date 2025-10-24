@@ -244,6 +244,12 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 			}
 			foundNewKeys = metric.GetNewKeys(&colKey.knownKeys, &colKey.newKeys, &colKey.warnKeys, service.whiteList, service.blackList, msg.Partition, msg.Offset)
 			service.dynamicSchemaLock.Unlock()
+		} else {
+			colKey = service.colKeys[state.Name]
+			if colKey == nil {
+				service.copyColKeys(state.Name)
+				colKey = service.colKeys[state.Name]
+			}
 		}
 	}
 	// WARNNING: metric.GetXXX may depend on p. Don't call them after p been freed.
@@ -273,9 +279,9 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 		}
 	}
 
-	if atomic.LoadInt32(&colKey.cntNewKeys) == 0 && service.consumer.state.Load() == util.StateRunning {
+	if colKey != nil && atomic.LoadInt32(&colKey.cntNewKeys) == 0 && service.consumer.state.Load() == util.StateRunning {
 		msgRow := model.MsgRow{Msg: msg, Row: row}
-		if service.sharder.policy != nil {
+		if service.sharder.policy != nil && service.sharder.policy.colSeq < len(*row) {
 			if msgRow.Shard, err = service.sharder.Calc(msgRow.Row, msg.Offset); err != nil {
 				util.Logger.Fatal("shard number calculation failed", zap.String("task", taskCfg.Name), zap.Error(err))
 			}
