@@ -74,6 +74,15 @@ func newConsumer(s *Sinker, gCfg *config.GroupConfig) *Consumer {
 	return c
 }
 
+func (c *Consumer) DbMap() map[string]*model.DbState {
+	dbMap := make(map[string]*model.DbState)
+	c.dbMap.Range(func(key, value any) bool {
+		dbMap[key.(string)] = value.(*model.DbState)
+		return true
+	})
+	return dbMap
+}
+
 func (c *Consumer) GetDbMap(name string) (*model.DbState, bool) {
 	val, ok := c.dbMap.Load(name)
 	if ok {

@@ -64,6 +64,10 @@ type Sinker struct {
 	consumerRestartCh chan *Consumer
 }
 
+func (s *Sinker) Consumer(name string) *Consumer {
+	return s.consumers[name]
+}
+
 // NewSinker get an instance of sinker with the task list
 func NewSinker(rcm cm.RemoteConfManager, http string, cmd *util.CmdOptions) *Sinker {
 	ctx, cancel := context.WithCancel(context.Background())

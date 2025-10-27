@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/housepower/clickhouse_sinker/config"
 	cm "github.com/housepower/clickhouse_sinker/config_manager"
+	model2 "github.com/housepower/clickhouse_sinker/model"
 	"github.com/housepower/clickhouse_sinker/mvc/model"
 	"github.com/housepower/clickhouse_sinker/task"
 )
@@ -53,7 +54,7 @@ func (c *TaskController) GetAllTasks(ctx *gin.Context) {
 		} else if state == "Dead and Empty" {
 			state = "Dead"
 		}
-		tasks = append(tasks, model.Task{
+		task := model.Task{
 			Name:          task.Name,
 			Cluster:       conf.Clickhouse.Cluster,
 			Table:         task.TableName,
@@ -63,7 +64,16 @@ func (c *TaskController) GetAllTasks(ctx *gin.Context) {
 			ColPolicy:     colPolicy,
 			Status:        state,
 			Lag:           statelags[task.Name].Lag,
-		})
+		}
+
+		consumer := c.runner.Consumer(task.ConsumerGroup)
+		if consumer != nil {
+			task.DbKey = consumer.DbMap()
+			if task.DbKey == nil {
+				task.DbKey = make(map[string]*model2.DbState)
+			}
+		}
+		tasks = append(tasks, task)
 	}
 	resp := model.TaskResp{
 		Tasks: tasks,

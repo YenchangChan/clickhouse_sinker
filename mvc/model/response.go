@@ -2,6 +2,7 @@ package model
 
 import (
 	"github.com/housepower/clickhouse_sinker/config"
+	"github.com/housepower/clickhouse_sinker/model"
 	"github.com/housepower/clickhouse_sinker/util"
 )
 
@@ -27,6 +28,7 @@ type Task struct {
 	Status        string
 	Rate          int
 	Lag           int64
+	DbKey         map[string]*model.DbState
 	LastUpdate    int64
 }
 
@@ -40,13 +42,14 @@ type TaskDetailResp struct {
 }
 
 type ProcInfoResp struct {
-	Version    string
-	BuildTime  string
-	Commit     string
-	GoVersion  string
-	Goroutines int
-	CPU        float64
-	Memory     uint64
-	StartTime  int64
-	Uptime     int64
+	Version        string
+	BuildTime      string
+	Commit         string
+	GoVersion      string
+	RecordPoolSize int64
+	Goroutines     int
+	CPU            float64
+	Memory         uint64
+	StartTime      int64
+	Uptime         int64
 }

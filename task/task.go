@@ -393,6 +393,7 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 				}
 			}
 			atomic.AddInt64(&state.BufLength, 1)
+			atomic.AddInt64(&state.Processed, 1)
 			service.consumer.SetDbMap(key, state)
 			row[idxSerID+2] = fmt.Sprintf("{%s}", strings.Join(labels, ", "))
 		}
@@ -470,6 +471,7 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 			}
 		}
 		atomic.AddInt64(&state.BufLength, 1)
+		atomic.AddInt64(&state.Processed, 1)
 		service.consumer.SetDbMap(key, state)
 
 		return state, &row

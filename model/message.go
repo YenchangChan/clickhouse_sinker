@@ -21,6 +21,7 @@ type DbState struct {
 	PrepareSQL string
 	PromSerSQL string
 	BufLength  int64
+	Processed  int64
 	NewKey     bool
 	Dims       []*ColumnWithType
 	NumDims    int
