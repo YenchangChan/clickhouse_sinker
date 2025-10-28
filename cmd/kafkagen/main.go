@@ -97,7 +97,7 @@ func newRecord(i int) []byte {
 	case "log":
 		return newLog(i).Byte()
 	case "monitor":
-		return newMetric(i).Byte()
+		return newMetric(i)
 	default:
 		util.Logger.Error("unknown mode", zap.String("mode", *Mode))
 	}
@@ -112,6 +112,7 @@ func once(kgo *KafkaFranz, lines, keys int) error {
 			defer wg.Done()
 			for i := 0; i < lines; i++ {
 				record := newRecord(i)
+				//util.Logger.Info("producing", zap.String("record", string(record)), zap.Int("line", i))
 				if err := kgo.Producer(record); err != nil {
 					util.Logger.Error("produce error", zap.Error(err))
 					continue

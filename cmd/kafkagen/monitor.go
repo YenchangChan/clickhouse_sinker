@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -50,7 +51,7 @@ var (
 	ObjectNames = []string{"dev-101-88", "dev-101-89", "dev-101-90", "dev-101-91", "dev-101-92", "dev-101-93", "dev-101-94", "dev-101-95", "dev-101-96", "dev-101-97", "dev-101-98", "dev-101-99", "dev-101-100"}
 	MetricFlags = []string{"datadog", "influxdb", "prometheus", "telegraf", "open-falcon", "cloud-monitor", "cloud-monitor-v2", "cloud-monitor-v3", "cloud-monitor-v4", "cloud-monitor-v5", "cloud-monitor-v6", "cloud-monitor-v7", "cloud-monitor"}
 	ObjectTypes = []string{"system", "system_io", "system_cpu", "system_mem", "system_disk", "system_net", "system_process", "system_process_cpu", "system_process_mem", "system_process_io", "system_process_thread", "system_process_thread_cpu", "system_process_thread_mem", "system_process_thread_io", "system_process_thread"}
-	AgentIds    = []string{"100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167", "100004604167"}
+	AgentIds    = []string{"100004604167", "100004604168", "100004604169", "100004604170", "100004604171", "100004604172", "100004604173", "100004604174", "100004604175", "100004604176", "100004604177", "100004604178", "100004604179", "100004604180", "100004604181", "100004604182", "100004604683", "100004604184", "100004604185", "100004604186", "100004604187", "100004604188", "100004604189", "100004604190", "100004604191", "100004604192", "100004604193", "100004604194", "100004604195", "100004604196", "100004604197", "100004604198"}
 	SeriesIds   = []int64{2761070129987504083, 2761070129987504084, 2761070129987504085, 2761070129987504086, 2761070129987504087, 2761070129987504088, 2761070129987504089, 2761070129987504090, 2761070129987504091, 2761070129987504092, 2761070129987504093, 2761070129987504094, 2761070129987504095, 2761070129987504096, 2761070129987504097, 2761070129987504098, 2761070129987504099, 2761070129987504100, 2761070129987504101, 2761070129987504102, 2761070129987504103, 2761070129987504104, 2761070129987504105, 2761070129987504106, 2761070129987504107, 2761070129987504108, 2761070129987504109}
 	ObjectIds   = []string{"1108491895784519", "1108491895784519", "1108491895784519", "1108491895784519", "1108491895784519", "1108491895784519", "1108491895784519", "1108491895784519", "1108491895784519", "1108491895784519", "1108491895784519", "110849189578451"}
 	Names       = []string{"system_io_util", "system_cpu_util", "system_mem_util", "system_disk_util", "system_net_util", "system_process_util", "system_process_cpu_util", "system_process_mem_util", "system_process_io_util", "system_process_thread_util", "system_process_thread_cpu_util", "system_process"}
@@ -73,21 +74,11 @@ type Metric struct {
 	Value      float64 `json:"value"`
 	Uin        string  `json:"uin"`
 	SecretKey  string  `json:"secret_key"`
-	Key1       string  `json:"key1,omittempty"`
-	Key2       string  `json:"key2,omittempty"`
-	Key3       string  `json:"key3,omittempty"`
-	Key4       string  `json:"key4,omittempty"`
-	Key5       string  `json:"key5,omittempty"`
-	Key6       string  `json:"key6,omittempty"`
-	Key7       string  `json:"key7,omitempty"`
-	Key8       string  `json:"key8,omittempty"`
-	Key9       string  `json:"key9,omitempty"`
-	Key10      string  `json:"key10,omitempty"`
 }
 
-func newMetric(i int) Metric {
+func newMetric(i int) []byte {
 	uin := Regions[randInt(len(Regions))]
-	m := Metric{
+	metric := Metric{
 		MetricType: MetricTypes[randInt(len(MetricTypes))],
 		FiledKey:   FiledKeys[randInt(len(FiledKeys))],
 		SeriesKey:  SeriesKeys[randInt(len(SeriesKeys))],
@@ -105,30 +96,12 @@ func newMetric(i int) Metric {
 		Uin:        uin,
 		SecretKey:  md5sum(uin),
 	}
-	selectedKey := randInt(10) + 1 // 生成1-10之间的随机数
-	switch selectedKey {
-	case 1:
-		m.Key1 = selectKey(1)
-	case 2:
-		m.Key2 = selectKey(2)
-	case 3:
-		m.Key3 = selectKey(3)
-	case 4:
-		m.Key4 = selectKey(4)
-	case 5:
-		m.Key5 = selectKey(5)
-	case 6:
-		m.Key6 = selectKey(6)
-	case 7:
-		m.Key7 = selectKey(7)
-	case 8:
-		m.Key8 = selectKey(8)
-	case 9:
-		m.Key9 = selectKey(9)
-	case 10:
-		m.Key10 = selectKey(10)
-	}
-	return m
+	m := make(map[string]interface{})
+	json.Unmarshal([]byte(metric.String()), &m)
+	n := randInt(500)
+	m[selectKey(n)] = fmt.Sprintf("value%d", n)
+	raw, _ := json.Marshal(&m)
+	return raw
 }
 
 func (l Metric) Byte() []byte {
