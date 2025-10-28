@@ -20,6 +20,14 @@ const OverviewView = {
                     <div class="metric-value">{{ formatMemory(procInfo.Memory || 0) }}</div>
                     <div class="metric-label">内存使用</div>
                 </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ procInfo.Tasks || 0 }}</div>
+                    <div class="metric-label">任务个数</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ procInfo.RecordPoolSize || 0 }}</div>
+                    <div class="metric-label">消息池大小</div>
+                </div>
             </div>
             
             <div class="card">

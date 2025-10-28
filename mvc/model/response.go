@@ -52,4 +52,5 @@ type ProcInfoResp struct {
 	Memory         uint64
 	StartTime      int64
 	Uptime         int64
+	Tasks          int
 }

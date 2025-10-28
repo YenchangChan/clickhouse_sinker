@@ -53,5 +53,10 @@ func (c *MetricController) GetProcSummary(ctx *gin.Context) {
 	resp.StartTime = util.GetProcessStartTime()
 	resp.Uptime = time.Now().Unix() - resp.StartTime
 
+	conf := c.runner.GetCurrentConfig()
+	if conf != nil {
+		resp.Tasks = len(conf.Tasks)
+	}
+
 	model.WrapMsg(ctx, model.E_SUCCESS, resp)
 }
