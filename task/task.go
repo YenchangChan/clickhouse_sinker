@@ -257,11 +257,13 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 			foundNewKeys = metric.GetNewKeys(&colKey.knownKeys, &colKey.newKeys, &colKey.warnKeys, service.whiteList, service.blackList, msg.Partition, msg.Offset)
 			service.dynamicSchemaLock.Unlock()
 		} else {
+			service.dynamicSchemaLock.Lock()
 			colKey = service.colKeys[state.Name]
 			if colKey == nil {
 				service.copyColKeys(state.Name)
 				colKey = service.colKeys[state.Name]
 			}
+			service.dynamicSchemaLock.Unlock()
 		}
 	}
 	// WARNNING: metric.GetXXX may depend on p. Don't call them after p been freed.
@@ -361,11 +363,6 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 		}
 
 		row := make(model.Row, 0, rowcount)
-		// util.Logger.Info("metric2Row", zap.Int("idxSerID", idxSerID),
-		// 	zap.String("key", key),
-		// 	zap.Int("rowcount", rowcount),
-		// 	zap.Int("numDims", numDims),
-		// 	zap.Int("lenDims", len(dims)))
 		for i := 0; i < idxSerID; i++ {
 			row = append(row, model.GetValueByType(metric, dims[i]))
 		}
@@ -398,6 +395,16 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 					labelVal := val.(string)
 					labels = append(labels, fmt.Sprintf(`%s: %s`, strconv.Quote(dim.Name), strconv.Quote(labelVal)))
 				}
+			}
+			if service.cfg.Clickhouse.DbKey == "" && !found {
+				util.Logger.Warn("no db key found, skipping this message",
+					zap.String("task", service.taskCfg.Name),
+					zap.String("topic", msg.Topic),
+					zap.Int("partition", msg.Partition),
+					zap.Int64("offset", msg.Offset),
+					zap.String("key", string(msg.Key)),
+					zap.Time("timestamp", *msg.Timestamp))
+				return state, nil
 			}
 			if !found {
 				var ok bool
@@ -480,6 +487,16 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 				row = append(row, val)
 			}
 		}
+		if service.cfg.Clickhouse.DbKey != "" && !found {
+			util.Logger.Warn("no db key found, skipping this message",
+				zap.String("task", service.taskCfg.Name),
+				zap.String("topic", msg.Topic),
+				zap.Int("partition", msg.Partition),
+				zap.Int64("offset", msg.Offset),
+				zap.String("key", string(msg.Key)),
+				zap.Time("timestamp", *msg.Timestamp))
+			return state, nil
+		}
 		if !found {
 			var ok bool
 			if state, ok = service.consumer.GetDbMap(key); !ok {
@@ -490,6 +507,7 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 				}
 			}
 		}
+
 		atomic.AddInt64(&state.BufLength, 1)
 		atomic.AddInt64(&state.Processed, 1)
 		service.consumer.SetDbMap(key, state)
