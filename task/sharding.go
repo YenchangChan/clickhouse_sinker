@@ -58,12 +58,15 @@ func NewShardingPolicy(shardingKey string, shardingStripe uint64, dims []*model.
 	return
 }
 
-func (policy *ShardingPolicy) Calc(row *model.Row, offset int64) (shard int, err error) {
+func (policy *ShardingPolicy) Calc(row *model.Row, offset int64, colSeq int) (shard int, err error) {
 	var val interface{}
-	if policy.colSeq < 0 {
+	if colSeq == INVALID_COL_SEQ {
+		colSeq = policy.colSeq
+	}
+	if colSeq < 0 {
 		val = offset
 	} else {
-		val = (*row)[policy.colSeq]
+		val = (*row)[colSeq]
 	}
 	if policy.stripe > 0 {
 		var valu64 uint64
@@ -97,7 +100,7 @@ func (policy *ShardingPolicy) Calc(row *model.Row, offset int64) (shard int, err
 		case time.Time:
 			valu64 = uint64(v.Unix())
 		default:
-			err = errors.Newf("failed to convert %+v to integer, colseq: %d", v, policy.colSeq)
+			err = errors.Newf("failed to convert %+v to integer, colseq: %d", v, colSeq)
 			return
 		}
 		shard = int((valu64 / policy.stripe) % uint64(policy.shards))
@@ -145,8 +148,8 @@ func NewSharder(service *Service) (sh *Sharder, err error) {
 	return
 }
 
-func (sh *Sharder) Calc(row *model.Row, offset int64) (int, error) {
-	return sh.policy.Calc(row, offset)
+func (sh *Sharder) Calc(row *model.Row, offset int64, colSeq int) (int, error) {
+	return sh.policy.Calc(row, offset, colSeq)
 }
 
 func (sh *Sharder) PutElement(key string, msgRow *model.MsgRow) {

@@ -196,6 +196,17 @@ func (c *Conn) write_v2(prepareSQL string, rows model.Rows, idxBegin, idxEnd int
 	}
 	var bmBad *roaring.Bitmap
 	for i, row := range rows {
+		if idxEnd > len(*row) {
+			idxEnd = len(*row)
+		}
+		if idxBegin >= idxEnd {
+			util.Logger.Warn("writeRows skipped due to invalid content",
+				zap.Int("idxBegin", idxBegin),
+				zap.Int("idxEnd", idxEnd),
+				zap.Reflect("row", *row),
+			)
+			continue
+		}
 		if err = batch.Append((*row)[idxBegin:idxEnd]...); err != nil {
 			if bmBad == nil {
 				errExec = errors.Wrapf(err, "driver.Batch.Append")

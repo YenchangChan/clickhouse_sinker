@@ -17,15 +17,16 @@ type InputMessage struct {
 }
 
 type DbState struct {
-	Name       string
-	PrepareSQL string
-	PromSerSQL string
-	BufLength  int64
-	Processed  int64
-	NewKey     bool
-	Dims       []*ColumnWithType
-	NumDims    int
-	IdxSerID   int
+	Name           string
+	PrepareSQL     string
+	PromSerSQL     string
+	BufLength      int64
+	Processed      int64
+	NewKey         bool
+	Dims           []*ColumnWithType
+	NumDims        int
+	IdxSerID       int
+	ShardingColSeq int
 }
 
 type Row []interface{}

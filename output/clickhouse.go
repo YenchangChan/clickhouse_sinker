@@ -195,10 +195,10 @@ func (c *ClickHouse) AllowWriteSeries(sid, mid int64) (allowed bool) {
 	return
 }
 
-func (c *ClickHouse) writeSeries(promSerSQL string, idxSerID int, rows model.Rows, conn *pool.Conn) (err error) {
+func (c *ClickHouse) writeSeries(promSerSQL string, idxSerID, numDims int, rows model.Rows, conn *pool.Conn) (err error) {
 	var seriesRows model.Rows
 	for _, row := range rows {
-		if len(*row) != c.NumDims {
+		if len(*row) != numDims {
 			continue
 		}
 		seriesRows = append(seriesRows, row)
@@ -206,7 +206,7 @@ func (c *ClickHouse) writeSeries(promSerSQL string, idxSerID int, rows model.Row
 	if len(seriesRows) != 0 {
 		begin := time.Now()
 		var numBad int
-		if numBad, err = writeRows(promSerSQL, seriesRows, idxSerID, c.NumDims, conn); err != nil {
+		if numBad, err = writeRows(promSerSQL, seriesRows, idxSerID, numDims, conn); err != nil {
 			return
 		}
 		// update c.bmSeries **after** writing series
@@ -246,10 +246,10 @@ func (c *ClickHouse) write(batch *model.Batch, sc *pool.ShardConn, dbVer *int, s
 
 	//row[:c.IdxSerID+1] is for metric table
 	//row[c.IdxSerID:] is for series table
-	numDims := c.NumDims
+	numDims := state.NumDims
 	if c.taskCfg.PrometheusSchema {
 		numDims = state.IdxSerID + 1
-		if err = c.writeSeries(state.PromSerSQL, state.IdxSerID, *batch.Rows, conn); err != nil {
+		if err = c.writeSeries(state.PromSerSQL, state.IdxSerID, state.NumDims, *batch.Rows, conn); err != nil {
 			return
 		}
 	}
@@ -427,7 +427,8 @@ func (c *ClickHouse) initSeriesSchema(conn *pool.Conn, database string) (promSer
 		}
 	}
 
-	sq, _ := SeriesQuotas.LoadOrStore(c.GetSeriesQuotaKey(database),
+	// seriesQuota 使用全局的，前提是__series_id__多租户不会重复
+	sq, _ := SeriesQuotas.LoadOrStore(c.GetSeriesQuotaKey(c.DbName),
 		&model.SeriesQuota{
 			NextResetQuota: time.Now().Add(10 * time.Second),
 			Birth:          time.Now(),
@@ -701,10 +702,6 @@ func (c *ClickHouse) GetMetricTable() string {
 	return ""
 }
 
-func (c *ClickHouse) SetSeriesQuota(sq *model.SeriesQuota) {
-	c.seriesQuota = sq
-}
-
 func (c *ClickHouse) ensureShardingkey(conn *pool.Conn, database, tblName string, parser string) (err error) {
 	if c.taskCfg.ShardingKey != "" {
 		return
@@ -839,19 +836,6 @@ func (c *ClickHouse) EnsureSchema(database string) (prepareSQL string, promSerSQ
 			if err = conn.Exec(createSql); err != nil {
 				util.Logger.Error(fmt.Sprintf("executing sql=> %s", createSql), zap.String("task", c.taskCfg.Name), zap.Error(err))
 			}
-		}
-
-		if c.taskCfg.PrometheusSchema {
-			sq, _ := SeriesQuotas.LoadOrStore(c.GetSeriesQuotaKey(database),
-				&model.SeriesQuota{
-					NextResetQuota: time.Now().Add(10 * time.Second),
-					Birth:          time.Now(),
-				})
-			seriesQuota := sq.(*model.SeriesQuota)
-			if seriesQuota.BmSeries == nil {
-				seriesQuota.BmSeries = make(map[int64]int64)
-			}
-			c.seriesQuota = seriesQuota
 		}
 	}
 	prepareSQL, promSerSQL, err = c.initSchema(database)

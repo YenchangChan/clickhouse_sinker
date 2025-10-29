@@ -1,8 +1,5 @@
 FROM golang:1.21-alpine3.19 AS builder
 
-RUN useradd housepower
-USER housepower
-
 ADD . /app
 WORKDIR /app
 RUN go env -w GOPROXY=https://goproxy.cn,direct

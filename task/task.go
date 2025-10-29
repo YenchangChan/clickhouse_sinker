@@ -30,10 +30,15 @@ import (
 	"github.com/housepower/clickhouse_sinker/model"
 	"github.com/housepower/clickhouse_sinker/output"
 	"github.com/housepower/clickhouse_sinker/parser"
+	"github.com/housepower/clickhouse_sinker/pool"
 	"github.com/housepower/clickhouse_sinker/statistics"
 	"github.com/housepower/clickhouse_sinker/util"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
+)
+
+const (
+	INVALID_COL_SEQ = -99
 )
 
 type ColKeys struct {
@@ -232,6 +237,13 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 			state.IdxSerID = service.clickhouse.IdxSerID
 			service.dynamicSchemaLock.Unlock()
 			state.NewKey = false
+			policy, err := NewShardingPolicy(taskCfg.ShardingKey, taskCfg.ShardingStripe, state.Dims, pool.NumShard())
+			if err == nil {
+				state.ShardingColSeq = policy.colSeq
+			} else {
+				state.ShardingColSeq = INVALID_COL_SEQ
+			}
+
 			service.consumer.SetDbMap(state.Name, state)
 			service.copyColKeys(state.Name)
 		}
@@ -282,7 +294,7 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 	if colKey != nil && atomic.LoadInt32(&colKey.cntNewKeys) == 0 && service.consumer.state.Load() == util.StateRunning {
 		msgRow := model.MsgRow{Msg: msg, Row: row}
 		if service.sharder.policy != nil && service.sharder.policy.colSeq < len(*row) {
-			if msgRow.Shard, err = service.sharder.Calc(msgRow.Row, msg.Offset); err != nil {
+			if msgRow.Shard, err = service.sharder.Calc(msgRow.Row, msg.Offset, state.ShardingColSeq); err != nil {
 				util.Logger.Fatal("shard number calculation failed", zap.String("task", taskCfg.Name), zap.Error(err))
 			}
 		} else {
@@ -323,13 +335,17 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 	if ok {
 		dims = state.Dims
 		numDims = state.NumDims
-		idxSerID = state.IdxSerID
 	} else {
 		state = &model.DbState{
-			Name:     key,
-			NewKey:   true,
-			IdxSerID: idxSerID,
+			Name:   key,
+			NewKey: true,
 		}
+	}
+	if service.taskCfg.PrometheusSchema {
+		idxSerID = state.IdxSerID
+	} else {
+		idxSerID = service.idxSerID
+		state.IdxSerID = idxSerID
 	}
 	if idxSerID >= 0 {
 		// If some labels are not Prometheus native, ETL shall calculate and pass "__series_id__" and "__mgmt_id__".
@@ -345,7 +361,11 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 		}
 
 		row := make(model.Row, 0, rowcount)
-		//util.Logger.Info("metric2Row", zap.Int("idxSerID", idxSerID), zap.String("key", key))
+		// util.Logger.Info("metric2Row", zap.Int("idxSerID", idxSerID),
+		// 	zap.String("key", key),
+		// 	zap.Int("rowcount", rowcount),
+		// 	zap.Int("numDims", numDims),
+		// 	zap.Int("lenDims", len(dims)))
 		for i := 0; i < idxSerID; i++ {
 			row = append(row, model.GetValueByType(metric, dims[i]))
 		}
