@@ -256,7 +256,8 @@ func (c *ClickHouse) write(batch *model.Batch, sc *pool.ShardConn, dbVer *int, s
 	begin := time.Now()
 	var numBad int
 	util.Logger.Info("write to clickhouse", zap.Int("rows", len(*batch.Rows)),
-		zap.Int("numDims", numDims), zap.String("task", c.taskCfg.Name), zap.String("dbkey", state.Name))
+		zap.Int("numDims", numDims), zap.String("task", c.taskCfg.Name),
+		zap.String("dbkey", state.Name), zap.String("replica", sc.GetReplica()))
 	if numBad, err = writeRows(state.PrepareSQL, *batch.Rows, 0, numDims, conn); err != nil {
 		return
 	}
