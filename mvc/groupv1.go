@@ -14,9 +14,10 @@ func InitRouterV1(groupV1 *gin.RouterGroup, cmdOps util.CmdOptions, runner *task
 
 	groupV1.GET("/config", cfgController.GetConfig)
 	groupV1.GET("/cmdline", cfgController.GetCmdLine)
+	groupV1.GET("/log", cfgController.GetLog)
 	groupV1.GET("/tasks", taskController.GetAllTasks)
-	groupV1.GET("/tasks/:taskname", taskController.GetTaskByName)
+	groupV1.GET("/task/:taskname", taskController.GetTaskByName)
+	groupV1.GET("/dbkey/:taskname", taskController.GetDbKeyByTask)
 	groupV1.POST("/tasks", taskController.GetTaskByCondition)
-	groupV1.GET("/tasks/", taskController.GetDbKeyByTask)
 	groupV1.GET("/metrics/procinfo", metricController.GetProcSummary)
 }

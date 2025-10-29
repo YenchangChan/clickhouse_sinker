@@ -212,9 +212,6 @@ func main() {
 		// cmdOps.HTTPPort=0: disable the http server
 		if cmdOps.HTTPPort > 0 {
 			ops := cmdOps
-			if rcm == nil {
-				ops.LocalCfgFile = ""
-			}
 			server = mvc.NewService(ops, runner, httpHost, httpPort, v)
 			err := server.Start()
 			if err != nil {

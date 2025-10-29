@@ -10,7 +10,6 @@ type ConfigResp struct {
 	ClickHouse *config.ClickHouseConfig
 	Kafka      *config.KafkaConfig
 	Discovery  *config.Discovery
-	Tasks      int
 }
 
 type CmdLineResp struct {
@@ -53,4 +52,18 @@ type ProcInfoResp struct {
 	StartTime      int64
 	Uptime         int64
 	Tasks          int
+}
+
+type LogResp struct {
+	Total int
+	Lines []string
+}
+
+type DbKeyResp struct {
+	Name       string
+	PrepareSQL string
+	PromSerSQL string
+	Processed  int64
+	NumDims    int
+	IdxSerID   int
 }

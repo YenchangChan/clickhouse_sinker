@@ -107,8 +107,38 @@ func (c *TaskController) GetTaskByCondition(ctx *gin.Context) {
 }
 
 func (c *TaskController) GetDbKeyByTask(ctx *gin.Context) {
+	taskName := ctx.Param("taskname")
 	if c.runner == nil {
 		model.WrapMsg(ctx, model.E_CONFIG_FAILED, nil)
 		return
 	}
+	conf := c.runner.GetCurrentConfig()
+	if conf == nil {
+		model.WrapMsg(ctx, model.E_CONFIG_FAILED, nil)
+		return
+	}
+	var t *config.TaskConfig
+	for _, task := range conf.Tasks {
+		if task.Name == taskName {
+			t = task
+			break
+		}
+	}
+
+	consumer := c.runner.Consumer(t.ConsumerGroup)
+	var resp []model.DbKeyResp
+	if consumer != nil {
+		dbKey := consumer.DbMap()
+		for _, v := range dbKey {
+			resp = append(resp, model.DbKeyResp{
+				IdxSerID:   v.IdxSerID,
+				Name:       v.Name,
+				NumDims:    v.NumDims,
+				PrepareSQL: v.PrepareSQL,
+				Processed:  v.Processed,
+				PromSerSQL: v.PromSerSQL,
+			})
+		}
+	}
+	model.WrapMsg(ctx, model.E_SUCCESS, resp)
 }
