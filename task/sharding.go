@@ -100,6 +100,8 @@ func (policy *ShardingPolicy) Calc(row *model.Row, offset int64, colSeq int) (sh
 		case time.Time:
 			valu64 = uint64(v.Unix())
 		default:
+			//util.Logger.Info(fmt.Sprintf("failed to convert %+v to integer, colseq: %d", v, colSeq))
+			//valu64 = uint64(0)
 			err = errors.Newf("failed to convert %+v to integer, colseq: %d", v, colSeq)
 			return
 		}

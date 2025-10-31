@@ -89,6 +89,7 @@ func (k *KafkaFranz) Init(cfg *config.Config, gCfg *config.GroupConfig, f chan F
 	)
 
 	maxPartBytes := int32(1 << (util.GetShift(100*k.grpConfig.BufferSize) - 1))
+	util.Logger.Info("kafka buffer size", zap.Int("maxPartBytes", int(maxPartBytes)))
 
 	opts = append(opts,
 		kgo.FetchMaxBytes(maxPartBytes),

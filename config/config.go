@@ -227,7 +227,7 @@ const (
 	defaultReloadSeriesMapIntervalSec = 3600    // 1 hour
 	defaultActiveSeriesRangeSec       = 300     // 5 min
 	defaultHeartbeatIntervalMs        = 60000   // 1 min
-	defaultSessionTimeoutMs           = 300000  // 5 min
+	defaultSessionTimeoutMs           = 120000  // 2 min
 	defaultRebalanceTimeoutMs         = 600000  // 10 min
 	defaultRequestTimeoutOverheadMs   = 300000  // 5 min
 	DefaultMaxPollIntervalMs          = 3600000 // 1 hour

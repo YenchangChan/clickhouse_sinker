@@ -295,9 +295,15 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 
 	if colKey != nil && atomic.LoadInt32(&colKey.cntNewKeys) == 0 && service.consumer.state.Load() == util.StateRunning {
 		msgRow := model.MsgRow{Msg: msg, Row: row}
-		if service.sharder.policy != nil && service.sharder.policy.colSeq < len(*row) {
+		if service.sharder.policy != nil && state.ShardingColSeq < len(*row) {
 			if msgRow.Shard, err = service.sharder.Calc(msgRow.Row, msg.Offset, state.ShardingColSeq); err != nil {
-				util.Logger.Fatal("shard number calculation failed", zap.String("task", taskCfg.Name), zap.Error(err))
+				util.Logger.Warn("shard number calculation failed, skip this message", zap.String("task", taskCfg.Name),
+					zap.String("dbkey", state.Name), zap.String("topic", msg.Topic),
+					zap.Int("partition", msg.Partition), zap.Int64("offset", msg.Offset),
+					zap.Int("colseq", state.ShardingColSeq),
+					zap.Reflect("row", msgRow.Row),
+					zap.Error(err))
+				return err
 			}
 		} else {
 			msgRow.Shard = int(msgRow.Msg.Offset * (int64(msgRow.Msg.Partition + 1)) >> service.offShift % int64(service.sharder.shards))
@@ -339,8 +345,14 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 		numDims = state.NumDims
 	} else {
 		state = &model.DbState{
-			Name:   key,
-			NewKey: true,
+			Name:           key,
+			NewKey:         true,
+			Dims:           service.dims,
+			PrepareSQL:     service.clickhouse.PrepareSQL,
+			PromSerSQL:     service.clickhouse.PromSerSQL,
+			NumDims:        service.numDims,
+			IdxSerID:       service.idxSerID,
+			ShardingColSeq: service.sharder.policy.colSeq,
 		}
 	}
 	if service.taskCfg.PrometheusSchema {
@@ -365,6 +377,9 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 		row := make(model.Row, 0, rowcount)
 		for i := 0; i < idxSerID; i++ {
 			row = append(row, model.GetValueByType(metric, dims[i]))
+		}
+		if idxSerID == 0 {
+			util.Logger.Info("CATCH YOU!!!!!!!!!!!!!!!", zap.Reflect("state", state))
 		}
 		row = append(row, seriesID) // __series_id__
 		if newSeries {
