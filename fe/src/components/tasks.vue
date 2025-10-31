@@ -96,8 +96,6 @@
               <td>
                 <button class="btn-small" @click="viewTaskConfig(task.Name)">配置</button>
                 <button class="btn-small" @click="viewTaskDbKey(task.Name)">dbkey</button>
-                <!-- 根据Status值显示不同的操作按钮 -->
-                <button class="btn-small" :disabled="loadingStates.tasks" v-if="task.Status === 'Dead'">重启</button>
               </td>
             </tr>
           </tbody>
@@ -164,7 +162,7 @@
                 <tr>
                   <th>数据库名</th>
                   <th>insertSQL</th>
-                  <th>seriesMap表SQL</th>
+                  <th>series表SQL</th>
                   <th>处理数据</th>
                   <th style="min-width: 100px; width: 100px;">字段个数</th>
                   <th>series下标</th>
@@ -350,7 +348,7 @@ export default {
       this.loadingConfig = true;
       try {
         const response = await api.getTaskConfig(taskName);
-        this.taskConfig = JSON.stringify(response.data, null, 2);
+        this.taskConfig = JSON.stringify(response.data.entity, null, 2);
         this.showConfigModal = true;
       } catch (error) {
         console.error('获取任务配置失败:', error);
@@ -449,21 +447,6 @@ export default {
     closeDbKeyModal() {
       this.showDbKeyModal = false;
       this.taskDbKey = null;
-    },
-    startTask(task) {
-      // 这里应该调用API启动任务
-      console.log('启动任务:', task.name);
-      this.refreshTasks();
-    },
-    stopTask(task) {
-      // 这里应该调用API停止任务
-      console.log('停止任务:', task.name);
-      this.refreshTasks();
-    },
-    restartTask(task) {
-      // 这里应该调用API重启任务
-      console.log('重启任务:', task.name);
-      this.refreshTasks();
     }
   }
 };
