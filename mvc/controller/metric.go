@@ -30,13 +30,14 @@ func (c *MetricController) GetProcSummary(ctx *gin.Context) {
 
 	// 获取系统信息
 	resp := model.ProcInfoResp{
-		Version:    c.version.Version, // 可以从build info获取
-		GoVersion:  c.version.GoVersion,
-		BuildTime:  c.version.BuildTime,
-		Commit:     c.version.Commit,
-		Goroutines: runtime.NumGoroutine(),
-		CPU:        0.0, // 需要实现CPU使用率计算
-		Memory:     0,   // 需要实现内存使用计算
+		Version:        c.version.Version,
+		GoVersion:      c.version.GoVersion,
+		BuildTime:      c.version.BuildTime,
+		Commit:         c.version.Commit,
+		Goroutines:     runtime.NumGoroutine(),
+		CPU:            0.0,
+		Memory:         0,
+		RecordPoolSize: util.Rs.Get(),
 	}
 
 	// 获取内存统计

@@ -1,6 +1,8 @@
 package util
 
-import "sync/atomic"
+import (
+	"sync/atomic"
+)
 
 type RecordSize struct {
 	poolSize int64

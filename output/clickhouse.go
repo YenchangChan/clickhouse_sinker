@@ -588,7 +588,10 @@ func (c *ClickHouse) ChangeSchema(dbkey string, newKeys *sync.Map) (err error) {
 			if c.taskCfg.PrometheusSchema && intVal > model.String {
 				util.Logger.Fatal("unsupported metric value type", zap.String("type", strVal), zap.String("name", strKey), zap.String("task", c.taskCfg.Name))
 			}
-			alterMetric = append(alterMetric, fmt.Sprintf("ADD COLUMN IF NOT EXISTS `%s` %s", strKey, strVal))
+			if intVal == model.Float64 || (intVal == model.Int64 && strKey != c.DimMgmtID) {
+				// 多指标仅支持float64和int64
+				alterMetric = append(alterMetric, fmt.Sprintf("ADD COLUMN IF NOT EXISTS `%s` %s", strKey, strVal))
+			}
 		}
 		return true
 	})
