@@ -47,12 +47,26 @@ var (
 		},
 		[]string{"task"},
 	)
+	ParseMsgTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: prefix + "parse_msg_total",
+			Help: "total num of parsed msgs",
+		},
+		[]string{"task", "dbkey"},
+	)
+	RecordPoolSize = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: prefix + "record_pool_size",
+			Help: "record size",
+		},
+		[]string{},
+	)
 	FlushMsgsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: prefix + "flush_msgs_total",
 			Help: "total num of flushed msgs",
 		},
-		[]string{"task"},
+		[]string{"task", "dbkey"},
 	)
 	FlushMsgsErrorTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -138,6 +152,7 @@ var (
 func init() {
 	prometheus.MustRegister(ConsumeMsgsTotal)
 	prometheus.MustRegister(ParseMsgsErrorTotal)
+	prometheus.MustRegister(ParseMsgTotal)
 	prometheus.MustRegister(FlushMsgsTotal)
 	prometheus.MustRegister(FlushMsgsErrorTotal)
 	prometheus.MustRegister(ConsumeOffsets)
@@ -150,6 +165,7 @@ func init() {
 	prometheus.MustRegister(WriteSeriesDropQuota)
 	prometheus.MustRegister(WriteSeriesDropUnchanged)
 	prometheus.MustRegister(WriteSeriesSucceed)
+	prometheus.MustRegister(RecordPoolSize)
 	prometheus.MustRegister(collectors.NewBuildInfoCollector())
 }
 
@@ -244,6 +260,8 @@ func (p *Pusher) reconnect() {
 		Collector(WriteSeriesDropQuota).
 		Collector(WriteSeriesDropUnchanged).
 		Collector(WriteSeriesSucceed).
+		Collector(RecordPoolSize).
+		Collector(ParseMsgTotal).
 		Collector(collectors.NewGoCollector()).
 		Collector(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{})).
 		Grouping("instance", p.instance).Format(expfmt.FmtText)

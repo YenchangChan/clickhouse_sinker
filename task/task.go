@@ -33,6 +33,7 @@ import (
 	"github.com/housepower/clickhouse_sinker/pool"
 	"github.com/housepower/clickhouse_sinker/statistics"
 	"github.com/housepower/clickhouse_sinker/util"
+	"github.com/rcrowley/go-metrics"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
@@ -75,6 +76,7 @@ type Service struct {
 	limiter  *rate.Limiter //作用：控制打日志的频率
 	offShift int64
 	consumer *Consumer
+	meter    metrics.Meter
 }
 
 // cloneTask create a new task by stealing members from s instead of creating a new one
@@ -88,6 +90,7 @@ func cloneTask(s *Service, newGroup *Consumer) (service *Service) {
 		whiteList:  s.whiteList,
 		blackList:  s.blackList,
 		lblBlkList: s.lblBlkList,
+		meter:      s.meter,
 	}
 	if newGroup != nil {
 		service.consumer = newGroup
@@ -114,6 +117,8 @@ func NewTaskService(cfg *config.Config, taskCfg *config.TaskConfig, c *Consumer)
 		consumer:   c,
 		colKeys:    make(map[string]*ColKeys),
 	}
+	service.meter = metrics.NewMeter()
+	metrics.GetOrRegister("rate.requests", service.meter)
 	if taskCfg.DynamicSchema.WhiteList != "" {
 		service.whiteList = regexp.MustCompile(taskCfg.DynamicSchema.WhiteList)
 	}
@@ -124,6 +129,10 @@ func NewTaskService(cfg *config.Config, taskCfg *config.TaskConfig, c *Consumer)
 		service.lblBlkList = regexp.MustCompile(taskCfg.PromLabelsBlackList)
 	}
 	return
+}
+
+func (service *Service) Meter() metrics.Meter {
+	return service.meter
 }
 
 func (service *Service) copyColKeys(dbkey string) {

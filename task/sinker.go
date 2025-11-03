@@ -345,6 +345,7 @@ func (s *Sinker) applyConfig(newCfg *config.Config) (err error) {
 	util.SetLogLevel(newCfg.LogLevel)
 	util.Rs.SetPoolSize(newCfg.RecordPoolSize)
 	util.Rs.Reset()
+	statistics.RecordPoolSize.WithLabelValues().Set(0)
 	if err := util.Gsypt.Unmarshal(&newCfg.Clickhouse); err != nil {
 		util.Logger.Error("failed to decrypt config password", zap.Error(err))
 		return err

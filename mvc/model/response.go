@@ -25,7 +25,7 @@ type Task struct {
 	Type          string
 	ColPolicy     string
 	Status        string
-	Rate          int
+	Rate          int64
 	Lag           int64
 	DbKey         map[string]*model.DbState
 	LastUpdate    int64

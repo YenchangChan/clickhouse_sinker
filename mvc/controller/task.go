@@ -73,6 +73,11 @@ func (c *TaskController) GetAllTasks(ctx *gin.Context) {
 				task.DbKey = make(map[string]*model2.DbState)
 			}
 		}
+		service := consumer.GetTask(task.Name)
+		if service != nil {
+			task.Rate = int64(service.Meter().Rate1())
+		}
+
 		tasks = append(tasks, task)
 	}
 	resp := model.TaskResp{

@@ -37,6 +37,7 @@ import (
 
 	"github.com/housepower/clickhouse_sinker/config"
 	"github.com/housepower/clickhouse_sinker/model"
+	"github.com/housepower/clickhouse_sinker/statistics"
 	"github.com/housepower/clickhouse_sinker/util"
 )
 
@@ -202,9 +203,10 @@ LOOP:
 		OnConsumerPoll(k.consumerId)
 		fetchRecords := fetches.NumRecords()
 		util.Rs.Inc(int64(fetchRecords))
+		statistics.RecordPoolSize.WithLabelValues().Add(float64(fetchRecords))
 		// Automatically end the program if it remains inactive for a specific duration of time.
 		timeout := processTimeOut * time.Minute
-		if processTimeOut < time.Duration(k.cfg.Kafka.Properties.RebalanceTimeout)*time.Millisecond {
+		if time.Duration(processTimeOut*time.Minute) < time.Duration(k.cfg.Kafka.Properties.RebalanceTimeout)*time.Millisecond {
 			timeout = time.Duration(k.cfg.Kafka.Properties.RebalanceTimeout) * time.Millisecond
 		}
 		t := time.NewTimer(timeout)

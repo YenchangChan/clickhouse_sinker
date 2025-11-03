@@ -25,6 +25,7 @@ import (
 	"github.com/housepower/clickhouse_sinker/config"
 	"github.com/housepower/clickhouse_sinker/input"
 	"github.com/housepower/clickhouse_sinker/model"
+	"github.com/housepower/clickhouse_sinker/statistics"
 	"github.com/housepower/clickhouse_sinker/util"
 	"go.uber.org/zap"
 
@@ -98,6 +99,15 @@ func (c *Consumer) SetDbMap(name string, state *model.DbState) {
 
 func (c *Consumer) DelDbMap(name string) {
 	c.dbMap.Delete(name)
+}
+
+func (c *Consumer) GetTask(tskName string) *Service {
+	task, ok := c.tasks.Load(tskName)
+	if ok {
+		return task.(*Service)
+	} else {
+		return nil
+	}
 }
 
 func (c *Consumer) addTask(tsk *Service) {
@@ -208,8 +218,10 @@ func (c *Consumer) processFetch() {
 				// flush to shard, ck
 				task := value.(*Service)
 				task.sharder.Flush(c.ctx, &wg, *state)
+				statistics.ParseMsgTotal.WithLabelValues(task.taskCfg.Name, state.Name).Add(float64(state.BufLength))
 				return true
 			})
+
 			state.BufLength = 0
 			c.SetDbMap(state.Name, state)
 
@@ -281,6 +293,7 @@ func (c *Consumer) processFetch() {
 									err = e
 									// decrise the error record
 									util.Rs.Dec(1)
+									statistics.RecordPoolSize.WithLabelValues().Sub(1)
 									return false
 								}
 							}

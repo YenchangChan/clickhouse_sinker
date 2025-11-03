@@ -154,6 +154,7 @@ func (c *ClickHouse) Send(batch *model.Batch, state model.DbState) {
 	}); err != nil {
 		batch.Wg.Done()
 		util.Rs.Dec(int64(batch.RealSize))
+		statistics.RecordPoolSize.WithLabelValues().Sub(float64(batch.RealSize))
 		return
 	}
 
@@ -265,7 +266,7 @@ func (c *ClickHouse) write(batch *model.Batch, sc *pool.ShardConn, dbVer *int, s
 	if numBad != 0 {
 		statistics.ParseMsgsErrorTotal.WithLabelValues(c.taskCfg.Name).Add(float64(numBad))
 	}
-	statistics.FlushMsgsTotal.WithLabelValues(c.taskCfg.Name).Add(float64(batch.RealSize))
+	statistics.FlushMsgsTotal.WithLabelValues(c.taskCfg.Name, state.Name).Add(float64(batch.RealSize))
 	return
 }
 
@@ -276,6 +277,7 @@ func (c *ClickHouse) loopWrite(batch *model.Batch, sc *pool.ShardConn, state mod
 
 	defer func() {
 		util.Rs.Dec(int64(batch.RealSize))
+		statistics.RecordPoolSize.WithLabelValues().Sub(float64(batch.RealSize))
 	}()
 	times := c.cfg.Clickhouse.RetryTimes
 	if times <= 0 {
