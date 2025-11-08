@@ -281,3 +281,12 @@ func (k *KafkaFranz) onPartitionAssigned(_ context.Context, _ *kgo.Client, _ map
 	k.consumerId = memberId
 	NewConsumerPoller(k.consumerId, k.grpConfig.Name, k.cl)
 }
+
+// IsMemberIDValid checks if the current member ID is still valid
+func (k *KafkaFranz) IsMemberIDValid() bool {
+	if k.cl == nil {
+		return false
+	}
+	memberId, _ := k.cl.GroupMetadata()
+	return memberId != ""
+}

@@ -148,6 +148,7 @@ func (c *Consumer) restart() {
 
 func (c *Consumer) cleanupFn() {
 	// ensure the completion of writing to ck
+	start := time.Now()
 	var wg sync.WaitGroup
 	c.tasks.Range(func(key, value any) bool {
 		wg.Add(1)
@@ -159,14 +160,25 @@ func (c *Consumer) cleanupFn() {
 		return true
 	})
 	wg.Wait()
+	util.Logger.Info("cleanupFn Drain done", zap.Duration("duration", time.Since(start)))
 
 	// ensure the completion of offset submission with timeout
 	c.mux.Lock()
 	defer c.mux.Unlock()
 
+	checkInterval := time.NewTicker(1 * time.Second)
+	defer checkInterval.Stop()
+
 	timeout := time.After(30 * time.Second) // 30秒超时
 	for c.numFlying != 0 {
 		util.Logger.Debug("draining flying pending commits", zap.String("consumergroup", c.grpConfig.Name), zap.Int32("pending", c.numFlying))
+		if c.inputer != nil && !c.inputer.IsMemberIDValid() {
+			util.Logger.Warn("member ID invalid during cleanup, forcing exit",
+				zap.String("consumergroup", c.grpConfig.Name))
+			c.numFlying = 0
+			return
+		}
+
 		select {
 		case <-c.ctx.Done():
 			util.Logger.Warn("context cancelled while waiting for pending commits", zap.String("consumergroup", c.grpConfig.Name))
@@ -175,9 +187,15 @@ func (c *Consumer) cleanupFn() {
 			util.Logger.Warn("timeout waiting for pending commits, forcing cleanup", zap.String("consumergroup", c.grpConfig.Name))
 			c.numFlying = 0
 			return
-		default:
-			util.Logger.Debug("waiting for pending commits", zap.String("consumergroup", c.grpConfig.Name))
-			c.commitDone.Wait()
+		case <-checkInterval.C:
+			// Check member ID validity periodically
+			if c.inputer != nil && !c.inputer.IsMemberIDValid() {
+				util.Logger.Warn("member ID invalid during cleanup, forcing exit",
+					zap.String("consumergroup", c.grpConfig.Name))
+				c.numFlying = 0
+				return
+			}
+			util.Logger.Debug("waiting for pending commits", zap.String("consumergroup", c.grpConfig.Name), zap.Int32("numFlying", c.numFlying))
 		}
 	}
 
@@ -211,8 +229,16 @@ func (c *Consumer) processFetch() {
 			return
 		}
 		var wg sync.WaitGroup
+		var dbkeysToFlush []*model.DbState
 		c.dbMap.Range(func(key, value any) bool {
 			state := value.(*model.DbState)
+			if state.BufLength > 0 {
+				dbkeysToFlush = append(dbkeysToFlush, state)
+			}
+			return true
+		})
+
+		for _, state := range dbkeysToFlush {
 			util.Logger.Debug("flush to clickhouse", zap.String("dbkey", state.Name), zap.Int64("rows", state.BufLength))
 			c.tasks.Range(func(key, value any) bool {
 				// flush to shard, ck
@@ -224,12 +250,12 @@ func (c *Consumer) processFetch() {
 
 			state.BufLength = 0
 			c.SetDbMap(state.Name, state)
-
+		}
+		if len(dbkeysToFlush) > 0 {
 			c.mux.Lock()
 			c.numFlying++
 			c.mux.Unlock()
-			return true
-		})
+		}
 		util.Logger.Info("commit offsets to kafka", zap.String("consumergroup", c.grpConfig.Name), zap.Reflect("offsets", recMap))
 		c.sinker.commitsCh <- &Commit{group: c.grpConfig.Name, offsets: recMap, wg: &wg, consumer: c}
 		recMap = make(model.RecordMap)

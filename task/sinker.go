@@ -143,6 +143,7 @@ func (s *Sinker) Run() {
 				util.Logger.Info("Sinker.Run quit due to context has been canceled")
 				break LOOP
 			case c := <-s.consumerRestartCh:
+				c.stop()
 				// only restart the consumer which was not changed in applyAnotherConfig
 				if c == s.consumers[c.grpConfig.Name] {
 					newGroup := newConsumer(s, c.grpConfig)
@@ -175,10 +176,7 @@ func (s *Sinker) Run() {
 				if consumerName != "" {
 					if consumer, ok := s.consumers[consumerName]; ok {
 						util.Logger.Warn("consumer restarted because of max.poll.interval.ms changed", zap.String("consumer", consumerName), zap.Int("max.poll.interval.ms", s.curCfg.Kafka.Properties.MaxPollInterval))
-						go func() {
-							consumer.stop()
-							s.consumerRestartCh <- consumer
-						}()
+						s.consumerRestartCh <- consumer
 					}
 				}
 			}
@@ -271,10 +269,7 @@ func (s *Sinker) Run() {
 				if consumerName != "" {
 					if consumer, ok := s.consumers[consumerName]; ok {
 						util.Logger.Warn("consumer restarted because of max.poll.interval.ms changed", zap.String("consumer", consumerName), zap.Int("max.poll.interval.ms", curInterval))
-						go func() {
-							consumer.stop()
-							s.consumerRestartCh <- consumer
-						}()
+						s.consumerRestartCh <- consumer
 					}
 				}
 			case <-sdTicker.C:
@@ -533,14 +528,24 @@ func (s *Sinker) commitFn() {
 				for i, value := range com.offsets {
 					for k, v := range value {
 						if err := c.inputer.CommitMessages(&model.InputMessage{Topic: i, Partition: int(k), Offset: v.End}); err != nil {
+							errStr := err.Error()
+							if strings.Contains(errStr, "UNKNOWN_MEMBER_ID") {
+								// During rebalance, don't immediately restart, wait for rebalance to complete
+								util.Logger.Warn("UNKNOWN_MEMBER_ID during rebalance, will wait for rebalance to complete",
+									zap.String("consumergroup", c.grpConfig.Name),
+									zap.String("topic", i),
+									zap.Int("partition", int(k)),
+									zap.Error(err))
+								time.Sleep(5 * time.Second)
+								// Don't restart immediately, let rebalance complete first
+							}
+							// Other errors, restart the consumer immediately
 							c.errCommit = true
 							// restart the consumer when facing commit error, avoid change the s.consumers outside of s.Run
-							// error could be RebalanceInProgress, IllegalGeneration, UnknownMemberID
-							go func() {
-								c.stop()
-								s.consumerRestartCh <- c
-							}()
+							// error could be RebalanceInProgress, IllegalGeneration
+							s.consumerRestartCh <- c
 							util.Logger.Warn("Batch.Commit failed, will restart later", zap.Error(err))
+
 							break LOOP
 						} else {
 							statistics.ConsumeOffsets.WithLabelValues(com.consumer.grpConfig.Name, i, strconv.Itoa(int(k))).Set(float64(v.End))
@@ -549,9 +554,11 @@ func (s *Sinker) commitFn() {
 				}
 			}
 			c.mux.Lock()
-			c.numFlying--
-			if c.numFlying == 0 {
-				c.commitDone.Broadcast()
+			if c.numFlying > 0 {
+				c.numFlying--
+				if c.numFlying == 0 {
+					c.commitDone.Broadcast()
+				}
 			}
 			c.mux.Unlock()
 		case <-s.stopCommitCh:
