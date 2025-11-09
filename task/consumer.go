@@ -239,25 +239,25 @@ func (c *Consumer) processFetch() {
 		})
 
 		for _, state := range dbkeysToFlush {
-			util.Logger.Debug("flush to clickhouse", zap.String("dbkey", state.Name), zap.Int64("rows", state.BufLength))
+			util.Logger.Debug("flush to clickhouse", zap.String("dbkey", state.DB), zap.Int64("rows", state.BufLength))
 			c.tasks.Range(func(key, value any) bool {
 				// flush to shard, ck
 				task := value.(*Service)
 				task.sharder.Flush(c.ctx, &wg, *state)
-				statistics.ParseMsgTotal.WithLabelValues(task.taskCfg.Name, state.Name).Add(float64(state.BufLength))
+				statistics.ParseMsgTotal.WithLabelValues(task.taskCfg.Name, state.DB).Add(float64(state.BufLength))
 				return true
 			})
 
 			state.BufLength = 0
-			c.SetDbMap(state.Name, state)
+			c.SetDbMap(state.DB, state)
 		}
 		if len(dbkeysToFlush) > 0 {
 			c.mux.Lock()
 			c.numFlying++
 			c.mux.Unlock()
+			util.Logger.Info("commit offsets to kafka", zap.String("consumergroup", c.grpConfig.Name), zap.Reflect("offsets", recMap))
+			c.sinker.commitsCh <- &Commit{group: c.grpConfig.Name, offsets: recMap, wg: &wg, consumer: c}
 		}
-		util.Logger.Info("commit offsets to kafka", zap.String("consumergroup", c.grpConfig.Name), zap.Reflect("offsets", recMap))
-		c.sinker.commitsCh <- &Commit{group: c.grpConfig.Name, offsets: recMap, wg: &wg, consumer: c}
 		recMap = make(model.RecordMap)
 	}
 
@@ -363,16 +363,14 @@ func (c *Consumer) processFetch() {
 				}
 			}
 
-			flushed := false
+			// 只要这一批数据加起来大于阈值，就flush
+			bufLength := 0
 			c.dbMap.Range(func(key, value interface{}) bool {
 				state := value.(*model.DbState)
-				if state.BufLength > int64(bufThreshold) {
-					flushed = true
-					return false
-				}
+				bufLength += int(state.BufLength)
 				return true
 			})
-			if flushed {
+			if bufLength > bufThreshold {
 				ticker.Reset(time.Duration(c.grpConfig.FlushInterval) * time.Second)
 				flushFn()
 			}

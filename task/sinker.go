@@ -574,7 +574,13 @@ func (s *Sinker) initBmSeries() (err error) {
 	for _, c := range s.consumers {
 		c.tasks.Range(func(key, value any) bool {
 			service := value.(*Service)
-			k := service.clickhouse.GetSeriesQuotaKey(service.clickhouse.DbName)
+			if service.clickhouse == nil {
+				return true
+			}
+			if service.clickhouse.Base == nil {
+				return true
+			}
+			k := service.clickhouse.GetSeriesQuotaKey(service.clickhouse.Base.DB)
 			if k != "" {
 				tables[k] = append(tables[k], service)
 			}

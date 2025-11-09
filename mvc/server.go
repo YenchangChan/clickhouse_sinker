@@ -79,10 +79,9 @@ func (s *Service) Start() (err error) {
 	go func() {
 		if err := s.svr.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			util.Logger.Error("http.ListenAndServe failed", zap.Error(err))
-		} else {
-			util.Logger.Info(fmt.Sprintf("Run http server at http://%s/", bind))
 		}
 	}()
+	util.Logger.Info(fmt.Sprintf("Run http server at http://%s/", bind))
 
 	return nil
 }

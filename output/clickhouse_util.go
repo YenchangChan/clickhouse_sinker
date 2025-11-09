@@ -14,7 +14,7 @@ func writeRows(prepareSQL string, rows model.Rows, idxBegin, idxEnd int, conn *p
 	return conn.Write(prepareSQL, rows, idxBegin, idxEnd)
 }
 
-func getDims(database, table string, excludedColumns []string, dbKey, parser string, conn *pool.Conn) (dims []*model.ColumnWithType, err error) {
+func getDims(database, table string, excludedColumns []string, dbKey, parser string, conn *pool.Conn) (dims []*model.ColumnWithType, keyDim model.ColumnWithType, err error) {
 	var rs *pool.Rows
 	notNullable := make(map[string]bool)
 	query := fmt.Sprintf(referedSQLTemplate, database, table)
@@ -56,13 +56,17 @@ func getDims(database, table string, excludedColumns []string, dbKey, parser str
 				nnull = false
 			}
 			sourceName := util.GetSourceName(parser, name)
-			dims = append(dims, &model.ColumnWithType{
+			dim := model.ColumnWithType{
 				Name:        name,
 				Type:        model.WhichType(typ),
 				SourceName:  sourceName,
 				NotNullable: nnull,
 				IsDbKey:     util.Match(dbKey, sourceName),
-			})
+			}
+			dims = append(dims, &dim)
+			if dim.IsDbKey {
+				keyDim = dim
+			}
 		}
 	}
 	if len(dims) == 0 {

@@ -66,20 +66,13 @@ WHERE
 
 // ClickHouse is an output service consumers from kafka messages
 type ClickHouse struct {
-	Dims       []*model.ColumnWithType
-	NumDims    int
-	IdxSerID   int
-	NameKey    string
-	PrepareSQL string
-	PromSerSQL string
-	// PrepareSQLTmpl string
-	// PromSerSQLTmpl string
-	DimSerID    string
-	DimMgmtID   string
-	SortingKeys []*model.ColumnWithType
-	TableName   string
-	DbName      string
-
+	Base           *model.DbState
+	KeyDim         model.ColumnWithType
+	NameKey        string
+	DimSerID       string
+	DimMgmtID      string
+	SortingKeys    []*model.ColumnWithType
+	TableName      string
 	cfg            *config.Config
 	taskCfg        *config.TaskConfig
 	seriesTbl      string
@@ -122,7 +115,7 @@ func NewClickHouse(cfg *config.Config, taskCfg *config.TaskConfig) *ClickHouse {
 
 // Init the clickhouse intance
 func (c *ClickHouse) Init() (err error) {
-	c.PrepareSQL, c.PromSerSQL, err = c.initSchema(c.cfg.Clickhouse.DB)
+	c.Base, err = c.initSchema(c.cfg.Clickhouse.DB)
 	return err
 }
 
@@ -258,7 +251,7 @@ func (c *ClickHouse) write(batch *model.Batch, sc *pool.ShardConn, dbVer *int, s
 	var numBad int
 	util.Logger.Info("write to clickhouse", zap.Int("rows", len(*batch.Rows)),
 		zap.Int("numDims", numDims), zap.String("task", c.taskCfg.Name),
-		zap.String("dbkey", state.Name), zap.String("replica", sc.GetReplica()))
+		zap.String("dbkey", state.DB), zap.String("replica", sc.GetReplica()))
 	if numBad, err = writeRows(state.PrepareSQL, *batch.Rows, 0, numDims, conn); err != nil {
 		return
 	}
@@ -266,7 +259,7 @@ func (c *ClickHouse) write(batch *model.Batch, sc *pool.ShardConn, dbVer *int, s
 	if numBad != 0 {
 		statistics.ParseMsgsErrorTotal.WithLabelValues(c.taskCfg.Name).Add(float64(numBad))
 	}
-	statistics.FlushMsgsTotal.WithLabelValues(c.taskCfg.Name, state.Name).Add(float64(batch.RealSize))
+	statistics.FlushMsgsTotal.WithLabelValues(c.taskCfg.Name, state.DB).Add(float64(batch.RealSize))
 	return
 }
 
@@ -314,9 +307,9 @@ func (c *ClickHouse) getSeriesDims(dims []*model.ColumnWithType, conn *pool.Conn
 	}
 }
 
-func (c *ClickHouse) initSeriesSchema(conn *pool.Conn, database string) (promSerSQL string, err error) {
+func (c *ClickHouse) initSeriesSchema(conn *pool.Conn, database string, state *model.DbState) (err error) {
 	if !c.taskCfg.PrometheusSchema {
-		c.IdxSerID = -1
+		state.IdxSerID = -1
 		return
 	}
 
@@ -324,25 +317,28 @@ func (c *ClickHouse) initSeriesSchema(conn *pool.Conn, database string) (promSer
 	if c.seriesTbl == "" {
 		c.seriesTbl = c.TableName + "_series"
 	}
-
+	var keyDim model.ColumnWithType
 	var seriesDims []*model.ColumnWithType
-	if seriesDims, err = getDims(database, c.seriesTbl, nil, c.cfg.Clickhouse.DbKey, c.taskCfg.Parser, conn); err != nil {
+	if seriesDims, keyDim, err = getDims(database, c.seriesTbl, nil, c.cfg.Clickhouse.DbKey, c.taskCfg.Parser, conn); err != nil {
 		if errors.Is(err, ErrTblNotExist) {
 			err = errors.Wrapf(err, "Please create series table for %s.%s", database, c.TableName)
 			return
 		}
 		return
 	}
+	if c.cfg.Clickhouse.DbKey != "" && keyDim.IsDbKey {
+		c.KeyDim = keyDim
+	}
 
 	c.getSeriesDims(seriesDims, conn)
 
 	// Move column "__series_id__" to the last.
 	var dimSerID *model.ColumnWithType
-	for i := 0; i < len(c.Dims); {
-		dim := c.Dims[i]
+	for i := 0; i < len(state.Dims); {
+		dim := state.Dims[i]
 		if dim.Name == c.DimSerID && dim.Type.Type == model.Int64 {
 			dimSerID = dim
-			c.Dims = append(c.Dims[:i], c.Dims[i+1:]...)
+			state.Dims = append(state.Dims[:i], state.Dims[i+1:]...)
 			break
 		} else {
 			i++
@@ -352,8 +348,8 @@ func (c *ClickHouse) initSeriesSchema(conn *pool.Conn, database string) (promSer
 		err = errors.Newf("Metric table %s.%s shall have column `%s Int64`.", database, c.TableName, c.DimSerID)
 		return
 	}
-	c.IdxSerID = len(c.Dims)
-	c.Dims = append(c.Dims, dimSerID)
+	state.IdxSerID = len(state.Dims)
+	state.Dims = append(state.Dims, dimSerID)
 
 	expSeriesDims := []*model.ColumnWithType{
 		{Name: c.DimSerID, Type: &model.TypeInfo{Type: model.Int64}},
@@ -385,7 +381,7 @@ func (c *ClickHouse) initSeriesSchema(conn *pool.Conn, database string) (promSer
 			break
 		}
 	}
-	c.Dims = append(c.Dims, seriesDims[1:]...)
+	state.Dims = append(state.Dims, seriesDims[1:]...)
 
 	// Generate SQL for series INSERT
 	if c.cfg.Clickhouse.Protocol == clickhouse.HTTP.String() {
@@ -398,26 +394,26 @@ func (c *ClickHouse) initSeriesSchema(conn *pool.Conn, database string) (promSer
 			params[i] = "?"
 		}
 
-		promSerSQL = "INSERT INTO " + database + "." + c.seriesTbl + " (" + strings.Join(serDimsQuoted, ",") + ") " +
+		state.PromSerSQL = "INSERT INTO " + database + "." + c.seriesTbl + " (" + strings.Join(serDimsQuoted, ",") + ") " +
 			"VALUES (" + strings.Join(params, ",") + ")"
 	} else {
 		serDimsQuoted := make([]string, len(seriesDims))
 		for i, serDim := range seriesDims {
 			serDimsQuoted[i] = fmt.Sprintf("`%s`", serDim.Name)
 		}
-		promSerSQL = fmt.Sprintf("INSERT INTO `%s`.`%s` (%s)",
+		state.PromSerSQL = fmt.Sprintf("INSERT INTO `%s`.`%s` (%s)",
 			database,
 			c.seriesTbl,
 			strings.Join(serDimsQuoted, ","))
 	}
-	util.Logger.Info(fmt.Sprintf("promSer sql=> %s", promSerSQL), zap.String("task", c.taskCfg.Name))
+	util.Logger.Info(fmt.Sprintf("promSer sql=> %s", state.PromSerSQL), zap.String("task", c.taskCfg.Name))
 
 	// Check distributed series table
 	if chCfg := &c.cfg.Clickhouse; chCfg.Cluster != "" {
 		withDistTable := false
 		info, e := c.getDistTbls(database, c.seriesTbl, chCfg.Cluster)
 		if e != nil {
-			return promSerSQL, e
+			return e
 		}
 		c.distSeriesTbls = make([]string, 0)
 		for _, i := range info {
@@ -433,23 +429,29 @@ func (c *ClickHouse) initSeriesSchema(conn *pool.Conn, database string) (promSer
 	}
 
 	// seriesQuota 使用全局的，前提是__series_id__多租户不会重复
-	sq, _ := SeriesQuotas.LoadOrStore(c.GetSeriesQuotaKey(c.DbName),
+	// 仅第一次初始化的时候需要初始化SeriesQuota
+	seriesQuotaKey := state.DB
+	sq, _ := SeriesQuotas.LoadOrStore(c.GetSeriesQuotaKey(seriesQuotaKey),
 		&model.SeriesQuota{
 			NextResetQuota: time.Now().Add(10 * time.Second),
 			Birth:          time.Now(),
 		})
 	c.seriesQuota = sq.(*model.SeriesQuota)
-
 	return
 }
 
-func (c *ClickHouse) initSchema(database string) (prepareSql, promSerSQL string, err error) {
+func (c *ClickHouse) initSchema(database string) (state *model.DbState, err error) {
+	state = &model.DbState{}
 	if idx := strings.Index(c.taskCfg.TableName, "."); idx > 0 {
 		c.TableName = c.taskCfg.TableName[idx+1:]
-		c.DbName = c.taskCfg.TableName[0:idx]
+		if c.cfg.Clickhouse.DbKey != "" {
+			state.DB = database
+		} else {
+			state.DB = c.taskCfg.TableName[0:idx]
+		}
 	} else {
 		c.TableName = c.taskCfg.TableName[idx+1:]
-		c.DbName = c.cfg.Clickhouse.DB
+		state.DB = database
 	}
 	c.seriesTbl = c.taskCfg.SeriesTableName
 
@@ -463,7 +465,7 @@ func (c *ClickHouse) initSchema(database string) (prepareSql, promSerSQL string,
 		withDistTable := false
 		info, e := c.getDistTbls(database, c.TableName, chCfg.Cluster)
 		if e != nil {
-			return prepareSql, promSerSQL, e
+			return state, e
 		}
 		c.distMetricTbls = make([]string, 0)
 		for _, i := range info {
@@ -481,60 +483,58 @@ func (c *ClickHouse) initSchema(database string) (prepareSql, promSerSQL string,
 		return
 	}
 	if c.taskCfg.AutoSchema {
-		if c.Dims, err = getDims(database, c.TableName, c.taskCfg.ExcludeColumns, c.cfg.Clickhouse.DbKey, c.taskCfg.Parser, conn); err != nil {
+		if state.Dims, c.KeyDim, err = getDims(database, c.TableName, c.taskCfg.ExcludeColumns, c.cfg.Clickhouse.DbKey, c.taskCfg.Parser, conn); err != nil {
 			return
 		}
 	} else {
-		c.Dims = make([]*model.ColumnWithType, 0, len(c.taskCfg.Dims))
+		state.Dims = make([]*model.ColumnWithType, 0, len(c.taskCfg.Dims))
 		for _, dim := range c.taskCfg.Dims {
-			c.Dims = append(c.Dims, &model.ColumnWithType{
+			state.Dims = append(state.Dims, &model.ColumnWithType{
 				Name:       dim.Name,
 				Type:       model.WhichType(dim.Type),
 				SourceName: dim.SourceName,
 			})
 		}
 	}
-	if promSerSQL, err = c.initSeriesSchema(conn, database); err != nil {
+	if err = c.initSeriesSchema(conn, database, state); err != nil {
 		return
 	}
+	state.NumDims = len(state.Dims)
 	// Generate SQL for INSERT
 	if c.cfg.Clickhouse.Protocol == clickhouse.HTTP.String() {
-		c.NumDims = len(c.Dims)
-		numDims := c.NumDims
+		numDims := state.NumDims
 		if c.taskCfg.PrometheusSchema {
-			numDims = c.IdxSerID + 1
+			numDims = state.IdxSerID + 1
 		}
 		quotedDms := make([]string, numDims)
 		for i := 0; i < numDims; i++ {
-			quotedDms[i] = fmt.Sprintf("`%s`", c.Dims[i].Name)
+			quotedDms[i] = fmt.Sprintf("`%s`", state.Dims[i].Name)
 		}
 		var params = make([]string, numDims)
 		for i := range params {
 			params[i] = "?"
 		}
-		prepareSql = "INSERT INTO " + database + "." + c.TableName + " (" + strings.Join(quotedDms, ",") + ") " +
+		state.PrepareSQL = "INSERT INTO " + database + "." + c.TableName + " (" + strings.Join(quotedDms, ",") + ") " +
 			"VALUES (" + strings.Join(params, ",") + ")"
 	} else {
-		c.NumDims = len(c.Dims)
-		numDims := c.NumDims
+		numDims := state.NumDims
 		if c.taskCfg.PrometheusSchema {
-			numDims = c.IdxSerID + 1
+			numDims = state.IdxSerID + 1
 		}
-		quotedDms := make([]string, numDims)
+		quotedDims := make([]string, numDims)
 		for i := 0; i < numDims; i++ {
-			quotedDms[i] = fmt.Sprintf("`%s`", c.Dims[i].Name)
+			quotedDims[i] = fmt.Sprintf("`%s`", state.Dims[i].Name)
 		}
-		prepareSql = fmt.Sprintf("INSERT INTO `%s`.`%s` (%s)",
+		state.PrepareSQL = fmt.Sprintf("INSERT INTO `%s`.`%s` (%s)",
 			database,
 			c.TableName,
-			strings.Join(quotedDms, ","))
+			strings.Join(quotedDims, ","))
 	}
-	util.Logger.Info(fmt.Sprintf("Prepare sql=> %s", prepareSql), zap.String("task", c.taskCfg.Name))
-
+	util.Logger.Info(fmt.Sprintf("Prepare sql=> %s", state.PrepareSQL), zap.String("task", c.taskCfg.Name))
 	return
 }
 
-func (c *ClickHouse) ChangeSchema(dbkey string, newKeys *sync.Map) (err error) {
+func (c *ClickHouse) ChangeSchema(state *model.DbState, newKeys *sync.Map) (err error) {
 	var onCluster string
 	taskCfg := c.taskCfg
 	chCfg := &c.cfg.Clickhouse
@@ -545,9 +545,9 @@ func (c *ClickHouse) ChangeSchema(dbkey string, newKeys *sync.Map) (err error) {
 	if taskCfg.DynamicSchema.MaxDims > 0 {
 		maxDims = taskCfg.DynamicSchema.MaxDims
 	}
-	newKeysQuota := maxDims - len(c.Dims)
+	newKeysQuota := maxDims - len(state.Dims)
 	if newKeysQuota <= 0 {
-		util.Logger.Warn("number of columns reaches upper limit", zap.Int("limit", maxDims), zap.Int("current", len(c.Dims)))
+		util.Logger.Warn("number of columns reaches upper limit", zap.Int("limit", maxDims), zap.Int("current", len(state.Dims)))
 		return
 	}
 
@@ -612,7 +612,7 @@ func (c *ClickHouse) ChangeSchema(dbkey string, newKeys *sync.Map) (err error) {
 		version = "1.0.0.0"
 	}
 	alterTable := func(tbl, col string) error {
-		query := fmt.Sprintf("ALTER TABLE `%s`.`%s` %s %s", dbkey, tbl, onCluster, col)
+		query := fmt.Sprintf("ALTER TABLE `%s`.`%s` %s %s", state.DB, tbl, onCluster, col)
 		if util.CompareClickHouseVersion(version, "23.3") >= 0 {
 			query += " SETTINGS alter_sync = 0"
 		}
@@ -687,7 +687,7 @@ func (c *ClickHouse) getDistTbls(database, table, clusterName string) (distTbls 
 
 func (c *ClickHouse) GetSeriesQuotaKey(db string) string {
 	if db == "" {
-		db = c.DbName
+		db = c.cfg.Clickhouse.DB
 	}
 	if c.taskCfg.PrometheusSchema {
 		if c.cfg.Clickhouse.Cluster != "" {
@@ -781,8 +781,7 @@ func (c *ClickHouse) ensureShardingkey(conn *pool.Conn, database, tblName string
 	return
 }
 
-func (c *ClickHouse) EnsureSchema(database string) (prepareSQL string, promSerSQL string, err error) {
-	prepareSQL, promSerSQL = c.PrepareSQL, c.PromSerSQL
+func (c *ClickHouse) EnsureSchema(state *model.DbState) (err error) {
 	if c.cfg.Clickhouse.DbKey == "" {
 		return
 	}
@@ -795,7 +794,7 @@ func (c *ClickHouse) EnsureSchema(database string) (prepareSQL string, promSerSQ
 	// check if table exists
 	var tableExists bool
 	query := fmt.Sprintf("SELECT count() FROM system.tables WHERE (database = '%s') AND (table = '%s')",
-		database, c.TableName)
+		state.DB, c.TableName)
 	util.Logger.Info(fmt.Sprintf("executing sql=> %s", query), zap.String("task", c.taskCfg.Name))
 	var count uint64
 	if err = conn.QueryRow(query).Scan(&count); err == nil {
@@ -810,7 +809,7 @@ func (c *ClickHouse) EnsureSchema(database string) (prepareSQL string, promSerSQ
 
 	if !tableExists {
 		util.Logger.Info("table not exists, creating tables")
-		query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s ON CLUSTER `%s`", database, c.cfg.Clickhouse.Cluster)
+		query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s ON CLUSTER `%s`", state.DB, c.cfg.Clickhouse.Cluster)
 		util.Logger.Info(fmt.Sprintf("executing sql=> %s", query), zap.String("task", c.taskCfg.Name))
 		if err = conn.Exec(query); err != nil {
 			util.Logger.Error(fmt.Sprintf("executing sql=> %s", query), zap.String("task", c.taskCfg.Name), zap.Error(err))
@@ -832,7 +831,7 @@ func (c *ClickHouse) EnsureSchema(database string) (prepareSQL string, promSerSQ
 		util.Logger.Info("tables to create", zap.Int("count", len(tables)), zap.Any("tables", tables))
 		for _, tbl := range tables {
 			var createSql string
-			createSql, err = genCreateSql(conn, c.DbName, tbl, database, c.cfg.Clickhouse.Cluster)
+			createSql, err = genCreateSql(conn, c.Base.DB, tbl, state.DB, c.cfg.Clickhouse.Cluster)
 			if err != nil {
 				util.Logger.Error("failed to gen create sql", zap.String("task", c.taskCfg.Name), zap.Error(err))
 				return
@@ -846,11 +845,18 @@ func (c *ClickHouse) EnsureSchema(database string) (prepareSQL string, promSerSQ
 			}
 		}
 	}
-	prepareSQL, promSerSQL, err = c.initSchema(database)
+	newState, err := c.initSchema(state.DB)
 	if err != nil {
-		util.Logger.Error("failed to init schema", zap.String("task", c.taskCfg.Name), zap.String("database", database), zap.Error(err))
+		util.Logger.Error("failed to init schema", zap.String("task", c.taskCfg.Name), zap.String("database", state.DB), zap.Error(err))
 		return
 	}
+	state.PrepareSQL = newState.PrepareSQL
+	state.PromSerSQL = newState.PromSerSQL
+	state.IdxSerID = newState.IdxSerID
+	state.NumDims = newState.NumDims
+	state.Dims = make([]*model.ColumnWithType, len(newState.Dims))
+	copy(state.Dims, newState.Dims)
+
 	return
 }
 

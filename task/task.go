@@ -17,7 +17,6 @@ package task
 
 import (
 	"fmt"
-	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -52,31 +51,21 @@ type ColKeys struct {
 
 // TaskService holds the configuration for each task
 type Service struct {
-	cfg        *config.Config
-	clickhouse *output.ClickHouse
-	pp         *parser.Pool
-	taskCfg    *config.TaskConfig
-	whiteList  *regexp.Regexp
-	blackList  *regexp.Regexp
-	lblBlkList *regexp.Regexp
-	dims       []*model.ColumnWithType
-	numDims    int
-
-	idxSerID int
-	nameKey  string
-
+	cfg               *config.Config
+	clickhouse        *output.ClickHouse
+	pp                *parser.Pool
+	taskCfg           *config.TaskConfig
+	whiteList         *regexp.Regexp
+	blackList         *regexp.Regexp
+	lblBlkList        *regexp.Regexp
+	base              *ColKeys
 	colKeys           map[string]*ColKeys
 	dynamicSchemaLock sync.Mutex
-	knownKeys         sync.Map
-	newKeys           sync.Map
-	warnKeys          sync.Map
-	cntNewKeys        int32 // size of newKeys
-
-	sharder  *Sharder
-	limiter  *rate.Limiter //作用：控制打日志的频率
-	offShift int64
-	consumer *Consumer
-	meter    metrics.Meter
+	sharder           *Sharder
+	limiter           *rate.Limiter //作用：控制打日志的频率
+	offShift          int64
+	consumer          *Consumer
+	meter             metrics.Meter
 }
 
 // cloneTask create a new task by stealing members from s instead of creating a new one
@@ -91,6 +80,8 @@ func cloneTask(s *Service, newGroup *Consumer) (service *Service) {
 		blackList:  s.blackList,
 		lblBlkList: s.lblBlkList,
 		meter:      s.meter,
+		colKeys:    s.colKeys,
+		base:       s.base,
 	}
 	if newGroup != nil {
 		service.consumer = newGroup
@@ -115,6 +106,7 @@ func NewTaskService(cfg *config.Config, taskCfg *config.TaskConfig, c *Consumer)
 		pp:         pp,
 		taskCfg:    taskCfg,
 		consumer:   c,
+		base:       &ColKeys{},
 		colKeys:    make(map[string]*ColKeys),
 	}
 	service.meter = metrics.NewMeter()
@@ -135,12 +127,12 @@ func (service *Service) Meter() metrics.Meter {
 	return service.meter
 }
 
-func (service *Service) copyColKeys(dbkey string) {
+func (service *Service) copyColKeys(state *model.DbState) {
 	colKey := &ColKeys{}
 	if service.colKeys == nil {
 		service.colKeys = make(map[string]*ColKeys)
 	}
-	for _, dims := range service.clickhouse.Dims {
+	for _, dims := range state.Dims {
 		if _, ok := colKey.knownKeys.Load(dims.SourceName); !ok {
 			colKey.knownKeys.Store(dims.SourceName, nil)
 		}
@@ -153,7 +145,7 @@ func (service *Service) copyColKeys(dbkey string) {
 	colKey.knownKeys.Store("", nil) // column name shall not be empty string
 	colKey.newKeys = sync.Map{}
 	atomic.StoreInt32(&colKey.cntNewKeys, 0)
-	service.colKeys[dbkey] = colKey
+	service.colKeys[state.DB] = colKey
 }
 
 // Init initializes the kafak and clickhouse task associated with this service
@@ -163,11 +155,6 @@ func (service *Service) Init() (err error) {
 	if err = service.clickhouse.Init(); err != nil {
 		return
 	}
-
-	service.dims = service.clickhouse.Dims
-	service.numDims = len(service.dims)
-	service.idxSerID = service.clickhouse.IdxSerID
-	service.nameKey = service.clickhouse.NameKey
 	service.limiter = rate.NewLimiter(rate.Every(10*time.Second), 1)
 	service.offShift = int64(util.GetShift(taskCfg.BufferSize))
 
@@ -179,26 +166,18 @@ func (service *Service) Init() (err error) {
 	if service.sharder, err = NewSharder(service); err != nil {
 		return
 	}
+	service.clickhouse.Base.ShardingColSeq = service.sharder.policy.colSeq
 
 	if taskCfg.DynamicSchema.Enable {
-		maxDims := math.MaxInt16
-		if taskCfg.DynamicSchema.MaxDims > 0 {
-			maxDims = taskCfg.DynamicSchema.MaxDims
+		for _, dim := range service.clickhouse.Base.Dims {
+			service.base.knownKeys.Store(dim.SourceName, nil)
 		}
-		if maxDims <= len(service.dims) {
-			taskCfg.DynamicSchema.Enable = false
-			util.Logger.Warn(fmt.Sprintf("disabled DynamicSchema since the number of columns reaches upper limit %d", maxDims), zap.String("task", taskCfg.Name))
-		} else {
-			for _, dim := range service.dims {
-				service.knownKeys.Store(dim.SourceName, nil)
-			}
-			for _, dim := range taskCfg.ExcludeColumns {
-				service.knownKeys.Store(dim, nil)
-			}
-			service.knownKeys.Store("", nil) // column name shall not be empty string
-			service.newKeys = sync.Map{}
-			atomic.StoreInt32(&service.cntNewKeys, 0)
+		for _, dim := range taskCfg.ExcludeColumns {
+			service.base.knownKeys.Store(dim, nil)
 		}
+		service.base.knownKeys.Store("", nil) // column name shall not be empty string
+		service.base.newKeys = sync.Map{}
+		atomic.StoreInt32(&service.base.cntNewKeys, 0)
 	}
 	service.consumer.addTask(service)
 
@@ -237,13 +216,11 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 		}
 		if state.NewKey {
 			service.dynamicSchemaLock.Lock()
-			state.PrepareSQL, state.PromSerSQL, err = service.clickhouse.EnsureSchema(state.Name)
+			err = service.clickhouse.EnsureSchema(state)
+
 			if err != nil {
 				util.Logger.Error("failed to ensure schema", zap.String("task", taskCfg.Name), zap.Error(err))
 			}
-			state.NumDims = service.clickhouse.NumDims
-			state.Dims = service.clickhouse.Dims
-			state.IdxSerID = service.clickhouse.IdxSerID
 			service.dynamicSchemaLock.Unlock()
 			state.NewKey = false
 			policy, err := NewShardingPolicy(taskCfg.ShardingKey, taskCfg.ShardingStripe, state.Dims, pool.NumShard())
@@ -253,24 +230,24 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 				state.ShardingColSeq = INVALID_COL_SEQ
 			}
 
-			service.consumer.SetDbMap(state.Name, state)
-			service.copyColKeys(state.Name)
+			service.consumer.SetDbMap(state.DB, state)
+			service.copyColKeys(state)
 		}
 		if taskCfg.DynamicSchema.Enable {
 			service.dynamicSchemaLock.Lock()
-			colKey = service.colKeys[state.Name]
+			colKey = service.colKeys[state.DB]
 			if colKey == nil {
-				service.copyColKeys(state.Name)
-				colKey = service.colKeys[state.Name]
+				service.copyColKeys(state)
+				colKey = service.colKeys[state.DB]
 			}
 			foundNewKeys = metric.GetNewKeys(&colKey.knownKeys, &colKey.newKeys, &colKey.warnKeys, service.whiteList, service.blackList, msg.Partition, msg.Offset)
 			service.dynamicSchemaLock.Unlock()
 		} else {
 			service.dynamicSchemaLock.Lock()
-			colKey = service.colKeys[state.Name]
+			colKey = service.colKeys[state.DB]
 			if colKey == nil {
-				service.copyColKeys(state.Name)
-				colKey = service.colKeys[state.Name]
+				service.copyColKeys(state)
+				colKey = service.colKeys[state.DB]
 			}
 			service.dynamicSchemaLock.Unlock()
 		}
@@ -292,10 +269,10 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 				go service.consumer.restart()
 			}
 			flushFn()
-			if err = service.clickhouse.ChangeSchema(state.Name, &colKey.newKeys); err != nil {
+			if err = service.clickhouse.ChangeSchema(state, &colKey.newKeys); err != nil {
 				util.Logger.Fatal("clickhouse.ChangeSchema failed", zap.String("task", taskCfg.Name), zap.Error(err))
 			}
-			service.consumer.DelDbMap(state.Name)
+			service.consumer.DelDbMap(state.DB)
 			cloneTask(service, nil)
 
 			return fmt.Errorf("consumer restart required due to new key")
@@ -307,7 +284,7 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 		if service.sharder.policy != nil && state.ShardingColSeq < len(*row) {
 			if msgRow.Shard, err = service.sharder.Calc(msgRow.Row, msg.Offset, state.ShardingColSeq); err != nil {
 				util.Logger.Warn("shard number calculation failed, skip this message", zap.String("task", taskCfg.Name),
-					zap.String("dbkey", state.Name), zap.String("topic", msg.Topic),
+					zap.String("dbkey", state.DB), zap.String("topic", msg.Topic),
 					zap.Int("partition", msg.Partition), zap.Int64("offset", msg.Offset),
 					zap.Int("colseq", state.ShardingColSeq),
 					zap.Reflect("row", msgRow.Row),
@@ -317,59 +294,54 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 		} else {
 			msgRow.Shard = int(msgRow.Msg.Offset * (int64(msgRow.Msg.Partition + 1)) >> service.offShift % int64(service.sharder.shards))
 		}
-		service.sharder.PutElement(state.Name, &msgRow)
+		service.sharder.PutElement(state.DB, &msgRow)
 	}
 
 	return nil
 }
 
 func (service *Service) GetDbKey(metric model.Metric) string {
-	// 它的作用就是从 metric 中提取dbkey，至于基于哪个库的dims模型，关系不大
-	key := service.clickhouse.DbName
-	service.consumer.dbMap.Range(func(dbKey, state any) bool {
-		s := state.(*model.DbState)
-		for _, dim := range s.Dims {
-			if dim.IsDbKey {
-				val := model.GetValueByType(metric, dim)
-				if val != nil && !util.ZeroValue(val) {
-					key = util.Replace(service.consumer.sinker.curCfg.Clickhouse.DbKey, dim.SourceName, val)
-				}
-				return false
-			}
-		}
-		return true
-	})
+	key := service.clickhouse.Base.DB //基础库的库名
+	dim := service.clickhouse.KeyDim
+	if dim.IsDbKey {
+		val := model.GetValueByType(metric, &dim)
+		if val != nil && !util.ZeroValue(val) {
+			key = util.Replace(service.consumer.sinker.curCfg.Clickhouse.DbKey, dim.SourceName, val)
+		} // 如果dbkey 没有设置，那么返回的还是基础库的库名
+	}
 	return key
 }
 
 func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage) (*model.DbState, *model.Row) {
+	base := service.clickhouse.Base
+	dims := base.Dims
+	numDims := base.NumDims
+	idxSerID := base.IdxSerID
+
 	key := service.GetDbKey(metric)
-	//var state *model.DbState
-	dims := service.dims
-	numDims := service.numDims
-	idxSerID := service.idxSerID
 	state, ok := service.consumer.GetDbMap(key)
 	if ok {
 		dims = state.Dims
 		numDims = state.NumDims
-	} else {
-		state = &model.DbState{
-			Name:           key,
-			NewKey:         true,
-			Dims:           service.dims,
-			PrepareSQL:     service.clickhouse.PrepareSQL,
-			PromSerSQL:     service.clickhouse.PromSerSQL,
-			NumDims:        service.numDims,
-			IdxSerID:       service.idxSerID,
-			ShardingColSeq: service.sharder.policy.colSeq,
-		}
-	}
-	if service.taskCfg.PrometheusSchema {
 		idxSerID = state.IdxSerID
 	} else {
-		idxSerID = service.idxSerID
-		state.IdxSerID = idxSerID
+		// 此处需要原样复制，避免修改base的值, copy dims， 避免因为浅拷贝导致base被意外修改
+		newDims := make([]*model.ColumnWithType, len(base.Dims))
+		copy(newDims, base.Dims)
+		state = &model.DbState{
+			DB:             key, //使用获取到的key
+			PrepareSQL:     base.PrepareSQL,
+			PromSerSQL:     base.PromSerSQL,
+			BufLength:      0,
+			Processed:      0,
+			NewKey:         true,
+			Dims:           newDims,
+			NumDims:        base.NumDims,
+			IdxSerID:       base.IdxSerID,
+			ShardingColSeq: base.ShardingColSeq,
+		}
 	}
+
 	if idxSerID >= 0 {
 		// If some labels are not Prometheus native, ETL shall calculate and pass "__series_id__" and "__mgmt_id__".
 		val := metric.GetInt64(service.clickhouse.DimSerID, false)
@@ -394,61 +366,24 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 		if newSeries {
 			var labels []string
 			row = append(row, mgmtID, nil) // __mgmt_id__, labels
-			found := false
 			for i := idxSerID + 3; i < numDims; i++ {
 				dim := dims[i]
 				val := model.GetValueByType(metric, dim)
-				if dim.IsDbKey {
-					if val != nil && !util.ZeroValue(val) {
-						key = util.Replace(service.consumer.sinker.curCfg.Clickhouse.DbKey, dim.SourceName, val)
-						found = true
-					}
-					var ok bool
-					if state, ok = service.consumer.GetDbMap(key); !ok {
-						//util.Logger.Info("new dbkey found, creating db", zap.String("dbkey", key), zap.String("task", service.taskCfg.Name))
-						state = &model.DbState{
-							Name:   key,
-							NewKey: true,
-						}
-					}
-				}
 				row = append(row, val)
-				if val != nil && dim.Type.Type == model.String && dim.Name != service.nameKey && dim.Name != "le" && (service.lblBlkList == nil || !service.lblBlkList.MatchString(dim.Name)) {
+				if val != nil && dim.Type.Type == model.String && dim.Name != service.clickhouse.NameKey && dim.Name != "le" && (service.lblBlkList == nil || !service.lblBlkList.MatchString(dim.Name)) {
 					// "labels" JSON excludes "le", so that "labels" can be used as group key for histogram queries.
 					// todo: what does "le" mean?
 					labelVal := val.(string)
 					labels = append(labels, fmt.Sprintf(`%s: %s`, strconv.Quote(dim.Name), strconv.Quote(labelVal)))
 				}
 			}
-			if service.cfg.Clickhouse.DbKey == "" && !found {
-				util.Logger.Warn("no db key found, skipping this message",
-					zap.String("task", service.taskCfg.Name),
-					zap.String("topic", msg.Topic),
-					zap.Int("partition", msg.Partition),
-					zap.Int64("offset", msg.Offset),
-					zap.String("key", string(msg.Key)),
-					zap.Time("timestamp", *msg.Timestamp))
-				return state, nil
-			}
-			if !found {
-				var ok bool
-				if state, ok = service.consumer.GetDbMap(key); !ok {
-					// util.Logger.Info("no db key found, using default db", zap.String("task", service.taskCfg.Name))
-					// service.clickhouse.EnsureSchema(key)
-					state = &model.DbState{
-						Name:       key,
-						PrepareSQL: service.clickhouse.PrepareSQL,
-						PromSerSQL: service.clickhouse.PromSerSQL,
-						NewKey:     true,
-					}
-				}
-			}
-			atomic.AddInt64(&state.BufLength, 1)
-			atomic.AddInt64(&state.Processed, 1)
-			service.consumer.SetDbMap(key, state)
+
 			row[idxSerID+2] = fmt.Sprintf("{%s}", strings.Join(labels, ", "))
 		}
 		//util.Logger.Info("metric2Row2222", zap.String("key", state.Name))
+		atomic.AddInt64(&state.BufLength, 1)
+		atomic.AddInt64(&state.Processed, 1)
+		service.consumer.SetDbMap(key, state)
 		return state, &row
 	} else {
 		var shardingVal uint64
@@ -461,7 +396,6 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 			shardingVal = xxhash.Sum64String(strings.Join(sortingKeys, "."))
 		}
 		row := make(model.Row, 0, len(dims))
-		found := false
 		for _, dim := range dims {
 			if strings.HasPrefix(dim.Name, "__kafka") {
 				if strings.HasSuffix(dim.Name, "_topic") {
@@ -481,21 +415,6 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 				row = append(row, shardingVal)
 			} else {
 				val := model.GetValueByType(metric, dim)
-				if dim.IsDbKey {
-					if val != nil && !util.ZeroValue(val) {
-						key = util.Replace(service.consumer.sinker.curCfg.Clickhouse.DbKey, dim.SourceName, val)
-						found = true
-					}
-					var ok bool
-					if state, ok = service.consumer.GetDbMap(key); !ok {
-						// util.Logger.Info("new dbkey found, creating db", zap.String("dbkey", key), zap.String("task", service.taskCfg.Name))
-						// service.clickhouse.EnsureSchema(key)
-						state = &model.DbState{
-							Name:   key,
-							NewKey: true,
-						}
-					}
-				}
 				if dim.NotNullable && val == nil {
 					// null 不能插入到非 nullbale字段中
 					util.Logger.Warn("null value detected, throw this message",
@@ -511,27 +430,6 @@ func (service *Service) metric2Row(metric model.Metric, msg *model.InputMessage)
 				row = append(row, val)
 			}
 		}
-		if service.cfg.Clickhouse.DbKey != "" && !found {
-			util.Logger.Warn("no db key found, skipping this message",
-				zap.String("task", service.taskCfg.Name),
-				zap.String("topic", msg.Topic),
-				zap.Int("partition", msg.Partition),
-				zap.Int64("offset", msg.Offset),
-				zap.String("key", string(msg.Key)),
-				zap.Time("timestamp", *msg.Timestamp))
-			return state, nil
-		}
-		if !found {
-			var ok bool
-			if state, ok = service.consumer.GetDbMap(key); !ok {
-				state = &model.DbState{
-					Name:       key,
-					PrepareSQL: service.clickhouse.PrepareSQL,
-					NewKey:     true,
-				}
-			}
-		}
-
 		atomic.AddInt64(&state.BufLength, 1)
 		atomic.AddInt64(&state.Processed, 1)
 		service.consumer.SetDbMap(key, state)

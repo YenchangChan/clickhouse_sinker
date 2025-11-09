@@ -137,7 +137,7 @@ func (c *TaskController) GetDbKeyByTask(ctx *gin.Context) {
 		for _, v := range dbKey {
 			resp = append(resp, model.DbKeyResp{
 				IdxSerID:   v.IdxSerID,
-				Name:       v.Name,
+				Name:       v.DB,
 				NumDims:    v.NumDims,
 				PrepareSQL: v.PrepareSQL,
 				Processed:  v.Processed,

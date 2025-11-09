@@ -134,7 +134,7 @@ func NewSharder(service *Service) (sh *Sharder, err error) {
 	var policy *ShardingPolicy
 	shards := pool.NumShard()
 	taskCfg := service.taskCfg
-	if policy, err = NewShardingPolicy(taskCfg.ShardingKey, taskCfg.ShardingStripe, service.clickhouse.Dims, shards); err != nil {
+	if policy, err = NewShardingPolicy(taskCfg.ShardingKey, taskCfg.ShardingStripe, service.clickhouse.Base.Dims, shards); err != nil {
 		return sh, errors.Wrapf(err, "error when creating sharding policy for task '%s'", service.taskCfg.Name)
 	}
 	sh = &Sharder{
@@ -181,7 +181,7 @@ func (sh *Sharder) Flush(c context.Context, wg *sync.WaitGroup, state model.DbSt
 		util.Logger.Debug("flush records to ck")
 		taskCfg := sh.service.taskCfg
 		batchId, _ := nanoid.New()
-		for i, rows := range sh.msgBuf[state.Name] {
+		for i, rows := range sh.msgBuf[state.DB] {
 			realSize := len(*rows)
 			if realSize > 0 {
 				msgCnt += realSize
@@ -195,16 +195,16 @@ func (sh *Sharder) Flush(c context.Context, wg *sync.WaitGroup, state model.DbSt
 				batch.Wg.Add(1)
 				sh.service.clickhouse.Send(batch, state)
 				rs := make(model.Rows, 0, realSize)
-				sh.msgBuf[state.Name][i] = &rs
+				sh.msgBuf[state.DB][i] = &rs
 			}
 		}
 		if msgCnt > 0 {
 			if sh.service.meter != nil {
 				sh.service.meter.Mark(int64(msgCnt))
 			}
-			util.Logger.Info(fmt.Sprintf("created a batch group for task %v with %d shards, total messages %d", sh.service.taskCfg.Name, len(sh.msgBuf[state.Name]), msgCnt),
-				zap.String("group", batchId), zap.String("dbkey", state.Name))
-			statistics.ShardMsgs.WithLabelValues(taskCfg.Name, state.Name).Sub(float64(msgCnt))
+			util.Logger.Info(fmt.Sprintf("created a batch group for task %v with %d shards, total messages %d", sh.service.taskCfg.Name, len(sh.msgBuf[state.DB]), msgCnt),
+				zap.String("group", batchId), zap.String("dbkey", state.DB))
+			statistics.ShardMsgs.WithLabelValues(taskCfg.Name, state.DB).Sub(float64(msgCnt))
 		}
 	}
 }

@@ -17,7 +17,7 @@ type InputMessage struct {
 }
 
 type DbState struct {
-	Name           string
+	DB             string
 	PrepareSQL     string
 	PromSerSQL     string
 	BufLength      int64
