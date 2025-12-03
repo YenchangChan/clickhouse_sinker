@@ -192,6 +192,7 @@ type TaskConfig struct {
 
 	FlushInterval int     `json:"flushInterval,omitempty"`
 	BufferSize    int     `json:"bufferSize,omitempty"`
+	MaxPartBytes  int     `json:"maxPartBytes,omitempty"`
 	TimeZone      string  `json:"timeZone"`
 	TimeUnit      float64 `json:"timeUnit"`
 	LastUpdate    int64   `json:"-"`
@@ -203,6 +204,7 @@ type GroupConfig struct {
 	Earliest      bool
 	FlushInterval int
 	BufferSize    int
+	MaxPartBytes  int
 	Configs       map[string]*TaskConfig
 }
 
@@ -374,6 +376,7 @@ func (cfg *Config) Normallize(constructGroup bool, httpAddr string, cred util.Cr
 					Topics:        []string{taskCfg.Topic},
 					FlushInterval: taskCfg.FlushInterval,
 					BufferSize:    taskCfg.BufferSize,
+					MaxPartBytes:  taskCfg.MaxPartBytes,
 					Configs:       make(map[string]*TaskConfig),
 				}
 				gCfg.Configs[taskCfg.Name] = taskCfg
@@ -388,6 +391,7 @@ func (cfg *Config) Normallize(constructGroup bool, httpAddr string, cred util.Cr
 				}
 				gCfg.Topics = append(gCfg.Topics, taskCfg.Topic)
 				gCfg.BufferSize += taskCfg.BufferSize
+				gCfg.MaxPartBytes += taskCfg.MaxPartBytes
 				gCfg.Configs[taskCfg.Name] = taskCfg
 			}
 		}
@@ -457,8 +461,9 @@ func (cfg *Config) normallizeTask(taskCfg *TaskConfig) (err error) {
 		taskCfg.BufferSize = defaultBufferSize
 	} else if taskCfg.BufferSize > MaxBufferSize {
 		taskCfg.BufferSize = MaxBufferSize
-	} else {
-		taskCfg.BufferSize = 1 << util.GetShift(taskCfg.BufferSize)
+	}
+	if taskCfg.MaxPartBytes <= 0 {
+		taskCfg.MaxPartBytes = taskCfg.BufferSize
 	}
 	if taskCfg.TimeZone == "" {
 		taskCfg.TimeZone = defaultTimeZone

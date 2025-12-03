@@ -89,8 +89,7 @@ func (k *KafkaFranz) Init(cfg *config.Config, gCfg *config.GroupConfig, f chan F
 		kgo.DisableAutoCommit(),
 	)
 
-	maxPartBytes := int32(1 << (util.GetShift(100*k.grpConfig.BufferSize) - 1))
-	util.Logger.Info("kafka buffer size", zap.Int("maxPartBytes", int(maxPartBytes)))
+	maxPartBytes := int32(1 << (util.GetShift(100*k.grpConfig.MaxPartBytes) - 1))
 
 	opts = append(opts,
 		kgo.FetchMaxBytes(maxPartBytes),
@@ -191,7 +190,7 @@ LOOP:
 			}
 			continue
 		}
-		fetches := k.cl.PollRecords(k.ctx, k.grpConfig.BufferSize)
+		fetches := k.cl.PollRecords(k.ctx, k.grpConfig.MaxPartBytes)
 		err := fetches.Err()
 		if fetches == nil || fetches.IsClientClosed() || errors.Is(err, context.Canceled) {
 			break
