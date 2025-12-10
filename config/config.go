@@ -57,10 +57,11 @@ type KafkaConfig struct {
 		RebalanceTimeout       int `json:"rebalance.timeout.ms"`
 		RequestTimeoutOverhead int `json:"request.timeout.ms"`
 		MaxPollInterval        int `json:"max.poll.interval.ms"`
-	} `merge:"kafka.properties"`
-	ResetSaslRealm bool `merge:"kafka.resetSaslRealm"`
-	Security       map[string]string
-	TLS            struct {
+	}
+	MaxConcurrentFetches int
+	ResetSaslRealm       bool
+	Security             map[string]string
+	TLS                  struct {
 		Enable         bool
 		CaCertFiles    string // CA cert.pem with which Kafka brokers certs be signed.  Leave empty for certificates trusted by the OS
 		ClientCertFile string // Required for client authentication. It's client cert.pem.
@@ -192,7 +193,7 @@ type TaskConfig struct {
 
 	FlushInterval int     `json:"flushInterval,omitempty"`
 	BufferSize    int     `json:"bufferSize,omitempty"`
-	MaxPartBytes  int     `json:"maxPartBytes,omitempty"`
+	MaxFetchSize  int     `json:"maxFetchSize,omitempty"`
 	TimeZone      string  `json:"timeZone"`
 	TimeUnit      float64 `json:"timeUnit"`
 	LastUpdate    int64   `json:"-"`
@@ -204,7 +205,7 @@ type GroupConfig struct {
 	Earliest      bool
 	FlushInterval int
 	BufferSize    int
-	MaxPartBytes  int
+	MaxFetchSize  int
 	Configs       map[string]*TaskConfig
 }
 
@@ -333,6 +334,9 @@ func (cfg *Config) Normallize(constructGroup bool, httpAddr string, cred util.Cr
 	if cfg.Discovery.CheckInterval == 0 {
 		cfg.Discovery.CheckInterval = DefaultDiscoveryIntervalSec
 	}
+	if cfg.Kafka.MaxConcurrentFetches <= 0 {
+		cfg.Kafka.MaxConcurrentFetches = 4
+	}
 
 	if cfg.Clickhouse.RetryTimes <= 0 {
 		cfg.Clickhouse.RetryTimes = defaultRetryTimes
@@ -376,7 +380,7 @@ func (cfg *Config) Normallize(constructGroup bool, httpAddr string, cred util.Cr
 					Topics:        []string{taskCfg.Topic},
 					FlushInterval: taskCfg.FlushInterval,
 					BufferSize:    taskCfg.BufferSize,
-					MaxPartBytes:  taskCfg.MaxPartBytes,
+					MaxFetchSize:  taskCfg.MaxFetchSize,
 					Configs:       make(map[string]*TaskConfig),
 				}
 				gCfg.Configs[taskCfg.Name] = taskCfg
@@ -391,7 +395,7 @@ func (cfg *Config) Normallize(constructGroup bool, httpAddr string, cred util.Cr
 				}
 				gCfg.Topics = append(gCfg.Topics, taskCfg.Topic)
 				gCfg.BufferSize += taskCfg.BufferSize
-				gCfg.MaxPartBytes += taskCfg.MaxPartBytes
+				gCfg.MaxFetchSize += taskCfg.MaxFetchSize
 				gCfg.Configs[taskCfg.Name] = taskCfg
 			}
 		}
@@ -462,8 +466,8 @@ func (cfg *Config) normallizeTask(taskCfg *TaskConfig) (err error) {
 	} else if taskCfg.BufferSize > MaxBufferSize {
 		taskCfg.BufferSize = MaxBufferSize
 	}
-	if taskCfg.MaxPartBytes <= 0 {
-		taskCfg.MaxPartBytes = taskCfg.BufferSize
+	if taskCfg.MaxFetchSize <= 0 {
+		taskCfg.MaxFetchSize = taskCfg.BufferSize
 	}
 	if taskCfg.TimeZone == "" {
 		taskCfg.TimeZone = defaultTimeZone
