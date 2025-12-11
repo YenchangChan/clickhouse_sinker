@@ -275,7 +275,7 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 			}
 			service.consumer.DelDbMap(state.DB)
 			cloneTask(service, nil)
-
+			util.Rs.Reset()
 			return fmt.Errorf("consumer restart required due to new key")
 		}
 	}
