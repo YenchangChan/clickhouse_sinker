@@ -536,6 +536,8 @@ func (c *ClickHouse) initSchema(database string) (state *model.DbState, err erro
 
 func (c *ClickHouse) ChangeSchema(state *model.DbState, newKeys *sync.Map) (err error) {
 	var onCluster string
+	util.Logger.Info("change schema >>>>>>>>>>")
+	defer util.Logger.Info("change schema <<<<<<<<<<")
 	taskCfg := c.taskCfg
 	chCfg := &c.cfg.Clickhouse
 	if chCfg.Cluster != "" {
@@ -587,11 +589,14 @@ func (c *ClickHouse) ChangeSchema(state *model.DbState, newKeys *sync.Map) (err 
 		if c.taskCfg.PrometheusSchema && intVal == model.String {
 			alterSeries = append(alterSeries, fmt.Sprintf("ADD COLUMN IF NOT EXISTS `%s` %s", strKey, strVal))
 		} else {
-			if c.taskCfg.PrometheusSchema && intVal > model.String {
-				util.Logger.Fatal("unsupported metric value type", zap.String("type", strVal), zap.String("name", strKey), zap.String("task", c.taskCfg.Name))
-			}
-			if intVal == model.Float64 || (intVal == model.Int64 && strKey != c.DimMgmtID) {
-				// 多指标仅支持float64和int64
+			if c.taskCfg.PrometheusSchema {
+				if intVal > model.String {
+					util.Logger.Fatal("unsupported metric value type", zap.String("type", strVal), zap.String("name", strKey), zap.String("task", c.taskCfg.Name))
+				} else if intVal == model.Float64 || (intVal == model.Int64 && strKey != c.DimMgmtID) {
+					// 多指标仅支持float64和int64
+					alterMetric = append(alterMetric, fmt.Sprintf("ADD COLUMN IF NOT EXISTS `%s` %s", strKey, strVal))
+				}
+			} else {
 				alterMetric = append(alterMetric, fmt.Sprintf("ADD COLUMN IF NOT EXISTS `%s` %s", strKey, strVal))
 			}
 		}
