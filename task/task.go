@@ -80,12 +80,17 @@ func cloneTask(s *Service, newGroup *Consumer) (service *Service) {
 		blackList:  s.blackList,
 		lblBlkList: s.lblBlkList,
 		meter:      s.meter,
-		colKeys:    s.colKeys,
+		colKeys:    make(map[string]*ColKeys),
 		base:       s.base,
 	}
 	if newGroup != nil {
 		service.consumer = newGroup
 	}
+	s.dynamicSchemaLock.Lock()
+	for k, v := range s.colKeys {
+		service.colKeys[k] = v
+	}
+	s.dynamicSchemaLock.Unlock()
 	if err := service.Init(); err != nil {
 		util.Logger.Fatal("failed to clone task", zap.String("group", service.taskCfg.ConsumerGroup), zap.String("task", service.taskCfg.Name), zap.Error(err))
 	}
@@ -232,7 +237,9 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 			}
 
 			service.consumer.SetDbMap(state.DB, state)
+			service.dynamicSchemaLock.Lock()
 			service.copyColKeys(state)
+			service.dynamicSchemaLock.Unlock()
 		}
 		if taskCfg.DynamicSchema.Enable {
 			service.dynamicSchemaLock.Lock()

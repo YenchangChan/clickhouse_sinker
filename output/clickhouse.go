@@ -536,8 +536,6 @@ func (c *ClickHouse) initSchema(database string) (state *model.DbState, err erro
 
 func (c *ClickHouse) ChangeSchema(state *model.DbState, newKeys *sync.Map) (err error) {
 	var onCluster string
-	util.Logger.Info("change schema >>>>>>>>>>")
-	defer util.Logger.Info("change schema <<<<<<<<<<")
 	taskCfg := c.taskCfg
 	chCfg := &c.cfg.Clickhouse
 	if chCfg.Cluster != "" {
