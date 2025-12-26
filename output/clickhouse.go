@@ -726,7 +726,7 @@ func (c *ClickHouse) ensureShardingkey(conn *pool.Conn, tblName string, parser s
 		return
 	}
 	// get engine
-	query := fmt.Sprintf("SELECT engine FROM system.tables WHERE database = '%s' AND table = '%s'",
+	query := fmt.Sprintf("SELECT engine FROM system.tables WHERE database = '%s' AND name = '%s'",
 		c.dbName, tblName)
 	util.Logger.Info(fmt.Sprintf("executing sql=> %s", query), zap.String("task", c.taskCfg.Name))
 	var engine string
