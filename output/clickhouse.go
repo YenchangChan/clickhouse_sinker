@@ -721,7 +721,7 @@ func (c *ClickHouse) ensureShardingkey(conn *pool.Conn, database, tblName string
 		return
 	}
 	// get engine
-	query := fmt.Sprintf("SELECT engine FROM system.tables WHERE database = '%s' AND table = '%s'",
+	query := fmt.Sprintf("SELECT engine FROM system.tables WHERE database = '%s' AND name = '%s'",
 		database, tblName)
 	util.Logger.Info(fmt.Sprintf("executing sql=> %s", query), zap.String("task", c.taskCfg.Name))
 	var engine string
@@ -796,7 +796,7 @@ func (c *ClickHouse) EnsureSchema(state *model.DbState) (err error) {
 	}
 	// check if table exists
 	var tableExists bool
-	query := fmt.Sprintf("SELECT count() FROM system.tables WHERE (database = '%s') AND (table = '%s')",
+	query := fmt.Sprintf("SELECT count() FROM system.tables WHERE (database = '%s') AND (name = '%s')",
 		state.DB, c.TableName)
 	util.Logger.Info(fmt.Sprintf("executing sql=> %s", query), zap.String("task", c.taskCfg.Name))
 	var count uint64
@@ -866,7 +866,7 @@ func (c *ClickHouse) EnsureSchema(state *model.DbState) (err error) {
 func genCreateSql(conn *pool.Conn, database, table, target, cluster string) (string, error) {
 	query := fmt.Sprintf(`SELECT replaceRegexpAll(replaceRegexpOne(create_table_query, 'CREATE TABLE( IF NOT EXISTS)?\\s+\\w+\\.\\w+', 'CREATE TABLE IF NOT EXISTS %s.%s ON CLUSTER %s'), '/clickhouse/tables/\\{cluster\\}/%s/', '/clickhouse/tables/{cluster}/%s/') AS create_sql
 FROM system.tables
-WHERE (database = '%s') AND (table = '%s')`,
+WHERE (database = '%s') AND (name = '%s')`,
 		target, table, cluster, database, target, database, table)
 	util.Logger.Info(fmt.Sprintf("executing sql=> %s", query))
 	var createSql string
