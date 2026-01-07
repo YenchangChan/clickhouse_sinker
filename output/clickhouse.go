@@ -476,6 +476,9 @@ func (c *ClickHouse) initSchema() (err error) {
 	} else {
 		c.Dims = make([]*model.ColumnWithType, 0, len(c.taskCfg.Dims))
 		for _, dim := range c.taskCfg.Dims {
+			if util.ArraySearch(dim.Name, c.taskCfg.ExcludeColumns) {
+				continue
+			}
 			c.Dims = append(c.Dims, &model.ColumnWithType{
 				Name:       dim.Name,
 				Type:       model.WhichType(dim.Type),
