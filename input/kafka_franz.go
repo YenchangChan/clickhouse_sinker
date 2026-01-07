@@ -89,11 +89,15 @@ func (k *KafkaFranz) Init(cfg *config.Config, gCfg *config.GroupConfig, f chan F
 		kgo.DisableAutoCommit(),
 	)
 
-	maxPartBytes := int32(1 << (util.GetShift(200*k.grpConfig.MaxFetchSize) - 1))
-
+	maxPartBytes := int32(1 << (util.GetShift(100*k.grpConfig.MaxFetchSize) - 1))
+	if maxPartBytes >= (1 << 30) {
+		maxPartBytes = 1 << 30
+	}
+	util.Logger.Info("kgo.Client.PollFetchs()", zap.Int32("maxPartBytes", maxPartBytes))
 	opts = append(opts,
 		kgo.FetchMaxBytes(10*maxPartBytes),
 		kgo.FetchMaxPartitionBytes(maxPartBytes),
+		kgo.BrokerMaxReadBytes(10*maxPartBytes),
 		kgo.OnPartitionsRevoked(k.onPartitionRevoked),
 		kgo.OnPartitionsAssigned(k.onPartitionAssigned),
 		kgo.RebalanceTimeout(time.Millisecond*time.Duration(cfg.Kafka.Properties.RebalanceTimeout)),
