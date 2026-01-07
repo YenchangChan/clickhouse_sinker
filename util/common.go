@@ -515,3 +515,12 @@ func readProcStat() (*cpuStat, error) {
 		idle:  idle,
 	}, nil
 }
+
+func ArraySearch[T string | int | int64 | int32 | uint | uint64 | uint32 | float32 | float64](target T, str_array []T) bool {
+	for _, str := range str_array {
+		if target == str {
+			return true
+		}
+	}
+	return false
+}

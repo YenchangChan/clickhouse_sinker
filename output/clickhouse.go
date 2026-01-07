@@ -489,6 +489,9 @@ func (c *ClickHouse) initSchema(database string) (state *model.DbState, err erro
 	} else {
 		state.Dims = make([]*model.ColumnWithType, 0, len(c.taskCfg.Dims))
 		for _, dim := range c.taskCfg.Dims {
+			if util.ArraySearch(dim.Name, c.taskCfg.ExcludeColumns) {
+				continue
+			}
 			state.Dims = append(state.Dims, &model.ColumnWithType{
 				Name:       dim.Name,
 				Type:       model.WhichType(dim.Type),
