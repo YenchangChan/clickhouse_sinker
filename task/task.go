@@ -50,6 +50,9 @@ type Service struct {
 	idxSerID int
 	nameKey  string
 
+	shardingKey    string
+	shardingStripe uint64
+
 	knownKeys  sync.Map
 	newKeys    sync.Map
 	warnKeys   sync.Map
@@ -124,8 +127,11 @@ func (service *Service) Init() (err error) {
 	service.offShift = int64(taskCfg.BufferSize)
 
 	if len(service.clickhouse.SortingKeys) > 0 {
-		service.taskCfg.ShardingKey = "__shardingkey"
-		service.taskCfg.ShardingStripe = 1
+		service.shardingKey = "__shardingkey"
+		service.shardingStripe = 1
+	} else {
+		service.shardingKey = taskCfg.ShardingKey
+		service.shardingStripe = taskCfg.ShardingStripe
 	}
 
 	if service.sharder, err = NewSharder(service); err != nil {
