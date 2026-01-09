@@ -133,8 +133,7 @@ type Sharder struct {
 func NewSharder(service *Service) (sh *Sharder, err error) {
 	var policy *ShardingPolicy
 	shards := pool.NumShard()
-	taskCfg := service.taskCfg
-	if policy, err = NewShardingPolicy(taskCfg.ShardingKey, taskCfg.ShardingStripe, service.clickhouse.Base.Dims, shards); err != nil {
+	if policy, err = NewShardingPolicy(service.shardingKey, service.shardingStripe, service.clickhouse.Base.Dims, shards); err != nil {
 		return sh, errors.Wrapf(err, "error when creating sharding policy for task '%s'", service.taskCfg.Name)
 	}
 	sh = &Sharder{

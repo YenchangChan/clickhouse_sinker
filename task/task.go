@@ -53,6 +53,8 @@ type ColKeys struct {
 type Service struct {
 	cfg               *config.Config
 	clickhouse        *output.ClickHouse
+	shardingKey       string
+	shardingStripe    uint64
 	pp                *parser.Pool
 	taskCfg           *config.TaskConfig
 	whiteList         *regexp.Regexp
@@ -165,8 +167,11 @@ func (service *Service) Init() (err error) {
 	service.offShift = int64(taskCfg.BufferSize)
 
 	if len(service.clickhouse.SortingKeys) > 0 {
-		service.taskCfg.ShardingKey = "__shardingkey"
-		service.taskCfg.ShardingStripe = 1
+		service.shardingKey = "__shardingkey"
+		service.shardingStripe = 1
+	} else {
+		service.shardingKey = service.taskCfg.ShardingKey
+		service.shardingStripe = service.taskCfg.ShardingStripe
 	}
 
 	if service.sharder, err = NewSharder(service); err != nil {
@@ -229,7 +234,7 @@ func (service *Service) Put(msg *model.InputMessage, flushFn func()) error {
 			}
 			service.dynamicSchemaLock.Unlock()
 			state.NewKey = false
-			policy, err := NewShardingPolicy(taskCfg.ShardingKey, taskCfg.ShardingStripe, state.Dims, pool.NumShard())
+			policy, err := NewShardingPolicy(service.shardingKey, service.shardingStripe, state.Dims, pool.NumShard())
 			if err == nil {
 				state.ShardingColSeq = policy.colSeq
 			} else {
