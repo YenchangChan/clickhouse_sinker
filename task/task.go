@@ -114,8 +114,9 @@ func NewTaskService(cfg *config.Config, taskCfg *config.TaskConfig, c *Consumer)
 		taskCfg:    taskCfg,
 		consumer:   c,
 		base:       &ColKeys{},
-		colKeys:    make(map[string]*ColKeys),
+		colKeys:    make(map[string]*ColKeys, 0),
 	}
+	service.consumer.dbMap.Clear()
 	service.meter = metrics.NewMeter()
 	metrics.GetOrRegister("rate.requests", service.meter)
 	if taskCfg.DynamicSchema.WhiteList != "" {

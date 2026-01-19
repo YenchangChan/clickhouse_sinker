@@ -462,6 +462,8 @@ func (s *Sinker) applyAnotherConfig(newCfg *config.Config) (err error) {
 						// apply TaskConfig Change
 						for _, tCfg := range group.Configs {
 							if !reflect.DeepEqual(tCfg, s.consumers[name].grpConfig.Configs[tCfg.Name]) {
+								oldConsumer := s.consumers[name]
+								oldConsumer.stop()
 								task := NewTaskService(newCfg, tCfg, s.consumers[name])
 								if err = task.Init(); err != nil {
 									return
