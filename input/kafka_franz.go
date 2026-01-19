@@ -90,8 +90,14 @@ func (k *KafkaFranz) Init(cfg *config.Config, gCfg *config.GroupConfig, f chan F
 	)
 
 	maxPartBytes := int32(1 << (util.GetShift(100*k.grpConfig.MaxFetchSize) - 1))
-	if maxPartBytes >= (1 << 30) {
+	//https://github.com/twmb/franz-go/blob/a09f0e71de43cd994fa774beaeb31bb05f9c34cc/pkg/kgo/config.go#L280
+	if maxPartBytes > (1 << 30) {
 		maxPartBytes = 1 << 30
+	}
+
+	//https://github.com/twmb/franz-go/blob/a09f0e71de43cd994fa774beaeb31bb05f9c34cc/pkg/kgo/config.go#L281
+	if maxPartBytes < (1 << 20) {
+		maxPartBytes = (1 << 20)
 	}
 	util.Logger.Info("kgo.Client.PollFetchs()", zap.Int32("maxPartBytes", maxPartBytes))
 	opts = append(opts,
